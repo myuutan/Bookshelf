@@ -1,7 +1,7 @@
 // Petite Bibliothèque の画面
-import { store, isCloud } from "./store.js";
-import { esc, titleHTML, hash, paletteFor, shrink, spineColorsFrom, normalizeIsbn } from "./util.js";
-import { startScanner, stopScanner } from "./scanner.js";
+import { store, isCloud } from "./store.js?v=20261021a";
+import { esc, titleHTML, hash, paletteFor, shrink, spineColorsFrom, normalizeIsbn } from "./util.js?v=20261021a";
+import { startScanner, stopScanner } from "./scanner.js?v=20261021a";
 
 const COLORS = ["c-rose", "c-gold", "c-ink", "c-sage", "c-sky"];
 const $ = s => document.querySelector(s);
