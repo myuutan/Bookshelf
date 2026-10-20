@@ -1,7 +1,7 @@
 // Petite Bibliothèque の画面
-import { store, isCloud } from "./store.js?v=20261021a";
-import { esc, titleHTML, hash, paletteFor, shrink, spineColorsFrom, normalizeIsbn } from "./util.js?v=20261021a";
-import { startScanner, stopScanner } from "./scanner.js?v=20261021a";
+import { store, isCloud } from "./store.js?v=20261021b";
+import { esc, titleHTML, hash, paletteFor, shrink, spineColorsFrom, normalizeIsbn } from "./util.js?v=20261021b";
+import { startScanner, stopScanner } from "./scanner.js?v=20261021b";
 
 const COLORS = ["c-rose", "c-gold", "c-ink", "c-sage", "c-sky"];
 const $ = s => document.querySelector(s);
@@ -43,11 +43,31 @@ function coverHTML(b, cls = "") {
     <div class="cv-in"><div class="ct">${esc(b.title)}</div><div class="ca">${esc(b.author)}</div><div class="art"></div></div>
     ${b.cover ? `<img class="real" src="${esc(b.cover)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}</div>`;
 }
+/* opencover の背表紙（ISBN があって対応している本だけ）。結果は覚えておき、2回目からはすぐ表示する */
+const OC_KEY = "pb-opencover-v1";
+const OC = (() => { try { return new Map(Object.entries(JSON.parse(localStorage.getItem(OC_KEY)) || {})); } catch (e) { return new Map(); } })();
+const saveOC = () => { try { localStorage.setItem(OC_KEY, JSON.stringify(Object.fromEntries(OC))); } catch (e) {} };
+const ocUrl = isbn => `https://image.opencover.jp/v1/cover/spine/${isbn}.webp`;
+const ocWidth = (h, ratio) => Math.round(Math.max(16, Math.min(64, h * ratio)));
+window.__ocSpine = img => {
+  const isbn = img.dataset.isbn, w = img.naturalWidth, h = img.naturalHeight;
+  // 背表紙らしい縦長の画像でなければ、対応していないとみなす
+  if (!w || !h || h < w * 2.5) { OC.set(isbn, 0); saveOC(); img.remove(); return; }
+  OC.set(isbn, +(w / h).toFixed(4)); saveOC();
+  const sp = img.closest(".spine"); if (!sp) return;
+  sp.style.width = ocWidth(parseFloat(sp.style.height), w / h) + "px"; sp.classList.add("oc-on");
+};
+window.__ocFail = img => { OC.set(img.dataset.isbn, 0); saveOC(); img.remove(); };
 function spineHTML(b, attrs = "") {
-  const { w, h, lean } = dims(b), [bg, ink] = inks(b);
+  let { w, h, lean } = dims(b); const [bg, ink] = inks(b);
+  const isbn = !b.spine && /^97[89]\d{10}$/.test(b.isbn || "") ? b.isbn : "";
+  const known = isbn ? OC.get(isbn) : undefined;
+  const useOc = isbn && known !== 0;
+  if (useOc && known) w = ocWidth(h, known);
+  const oc = useOc ? `<img class="oc" alt="" data-isbn="${isbn}" src="${ocUrl(isbn)}" loading="lazy" onload="__ocSpine(this)" onerror="__ocFail(this)">` : "";
   const style = b.spine ? `width:${w}px;height:${h}px;background-image:url('${esc(b.spine)}')` : `width:${w}px;height:${h}px;background-color:${bg};color:${ink}`;
-  return `<button class="spine ${b.spine ? "photo" : ""} ${lean ? "lean" : ""}" style="${style}" ${attrs} aria-label="${esc(b.title)}（${esc(b.author)}）">
-    <span class="rule"></span><span class="st">${esc(b.title)}</span><span class="sa">${esc(b.author)}</span><span class="rule"></span></button>`;
+  return `<button class="spine ${b.spine ? "photo" : ""} ${lean ? "lean" : ""} ${useOc && known ? "oc-on" : ""}" style="${style}" ${attrs} aria-label="${esc(b.title)}（${esc(b.author)}）">
+    <span class="rule"></span><span class="st">${esc(b.title)}</span><span class="sa">${esc(b.author)}</span><span class="rule"></span>${oc}</button>`;
 }
 const pills = b => b.tags.map(tagOf).filter(Boolean).map(t => `<span class="pill ${t.color}">${esc(t.name)}</span>`).join("");
 
@@ -107,7 +127,9 @@ function renderAdd() {
   } else {
     const d = state.draft || blankDraft();
     const pv = { ...d, title: d.title || "Title", author: d.author || "Author", cover: d.coverPreview || d.cover, spine: d.spinePreview || "", id: "preview" };
+    const dup = d.title.trim() && D().books.find(b => (d.isbn && b.isbn === d.isbn) || b.title.trim() === d.title.trim());
     body = `${state.msg ? `<p class="notice">${esc(state.msg)}</p>` : ""}
+      ${dup ? `<p class="notice warn">「${esc(dup.title)}」はすでに本棚にあります。同じ本を2冊目として入れる場合だけ「Place on the shelf」を押してください。</p>` : ""}
       <div class="preview">${coverHTML(pv)}${spineHTML({ ...pv, id: d.title || "preview" }, 'tabindex="-1" aria-hidden="true" disabled')}
         <p class="hint">表紙は自動で入ります。背表紙は表紙の色から作られ、持っている本なら写真に差し替えられます。</p></div>
       <div class="grid2">
@@ -320,7 +342,7 @@ async function lookupIsbn(isbn) {
   const res = await attempt(() => store.lookup({ isbn }));
   state.scanMsg = "";
   if (!res) { render(); return; }
-  if (res.length) toDraft(res[0], `見つかりました（${res[0].source === "rakuten" ? "楽天ブックス" : "Google Books"}）。内容を確かめて本棚に入れてください。`);
+  if (res.length) toDraft(res[0], `見つかりました（${res[0].source === "rakuten" ? "楽天ブックス" : "Google Books"}）。まだ本棚には入っていません。内容を確かめて「Place on the shelf」を押してください。`);
   else { state.draft = { ...blankDraft(), isbn }; toDraft(state.draft, `ISBN ${isbn} の本は見つかりませんでした。題名などを入力してください。`); }
 }
 
@@ -374,7 +396,7 @@ document.addEventListener("click", async e => {
 
   if (t.id === "menu-open") { state.menu = true; render(); $(".closer")?.focus(); return; }
   if (d.menuclose) { state.menu = false; render(); $("#menu-open")?.focus(); return; }
-  if (d.view) { if (d.view !== "add") stopScanner(); state.scanning = false; state.view = d.view; render(); return; }
+  if (d.view) { if (state.view === "add" && d.view !== "add" && state.draft) { if (state.addTab === "manual") state.draft = readDraft(); state.msg = "入力の途中の本です。まだ本棚には入っていません。続けるなら「Place on the shelf」を押してください。やめるなら「Cancel」を押してください。"; } if (d.view !== "add") stopScanner(); state.scanning = false; state.view = d.view; render(); return; }
   if (d.status) { state.status = d.status; render(); return; }
   if (d.shelf) { state.shelf = d.shelf; render(); return; }
   if (d.open) { state.open = d.open; state.menu = false; render(); $(".x")?.focus(); return; }
@@ -386,7 +408,7 @@ document.addEventListener("click", async e => {
   if (d.addtab) { if (state.addTab === "manual") state.draft = readDraft(); if (d.addtab !== "scan") stopScanner(); state.scanning = false; state.addTab = d.addtab; state.msg = ""; render(); return; }
   if (d.scan) { state.scanning = true; state.scanMsg = ""; render();
     startScanner("reader", isbn => lookupIsbn(isbn), msg => { state.scanning = false; state.scanMsg = msg; render(); }); return; }
-  if (d.pick) { toDraft(state.results[+d.pick], "この本の情報を入れました。内容を確かめて本棚に入れてください。"); return; }
+  if (d.pick) { toDraft(state.results[+d.pick], "選んだ本の情報を下の欄に入れました。まだ本棚には入っていません。内容を確かめて「Place on the shelf」を押してください。"); return; }
   if (d.draftbg) { state.draft = readDraft(); state.draft.backdrop = d.draftbg; render(); return; }
   if (t.id === "save") { saveDraft(); return; }
   if (t.id === "clear-draft") { state.draft = null; state.msg = ""; render(); return; }

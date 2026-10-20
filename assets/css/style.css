@@ -302,3 +302,9 @@ body.login-mode .nav,body.login-mode .menu-btn,body.login-mode .lede{display:non
 .confirm-book .cover{width:64px;box-shadow:0 8px 18px rgba(43,37,35,.18)}
 .confirm-bg{width:64px;aspect-ratio:3/4;background:center/cover;box-shadow:0 0 0 1px var(--line)}
 .btn.danger-solid{background:#8b3f4a;border-color:#8b3f4a;color:#fff}
+
+/* ===== opencover の背表紙・重複の注意 ===== */
+.spine img.oc{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .4s;pointer-events:none}
+.spine.oc-on img.oc{opacity:1}
+.spine.oc-on .st,.spine.oc-on .sa,.spine.oc-on .rule{visibility:hidden}
+.notice.warn{background:#f6ead6;color:#6b4d22}
