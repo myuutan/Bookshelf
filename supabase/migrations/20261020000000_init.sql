@@ -54,6 +54,11 @@ create table if not exists public.books (
 );
 create index if not exists books_user_idx on public.books(user_id, created_at);
 
+-- 同じ名前のタグ・本棚、同じ写真の背景を二重に作れないようにする
+create unique index if not exists tags_user_name_key on public.tags (user_id, name);
+create unique index if not exists shelves_user_name_key on public.shelves (user_id, name);
+create unique index if not exists backdrops_user_src_key on public.backdrops (user_id, src);
+
 -- サイト全体の設定（いまはサイトの背景だけ）
 create table if not exists public.settings (
   user_id uuid primary key default auth.uid() references auth.users(id) on delete cascade,

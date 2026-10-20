@@ -1,3 +1,4 @@
+[hidden]{display:none!important}
 /* Layout: パリの小さな書斎。選んだ写真が背景に透け、白い棚に背表紙が並ぶ。本を開くと写真の上に表紙が置かれる。 */
 :root{
   color-scheme: light;
@@ -75,13 +76,13 @@ h1{font-family:var(--f-display);font-weight:400;font-style:italic;font-size:clam
 .row .t{font-weight:500;font-size:15px;line-height:1.5}
 .row .a{font-family:var(--f-display);font-size:16px;color:var(--muted)}
 .row .tags{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end}
-@media (max-width:560px){.row{grid-template-columns:56px minmax(0,1fr)}.row .tags{grid-column:2;justify-content:flex-start}}
+@media (max-width:560px){.row{grid-template-columns:56px minmax(0,1fr)}.row .cover{width:56px}.row .tags{grid-column:2;justify-content:flex-start}}
 .listbox{background:var(--glass);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid var(--line);padding:4px 18px}
 
 /* covers (仮の表紙。本番は本物の画像) */
-.cover{position:relative;aspect-ratio:.7;container-type:inline-size;background:var(--cbg);color:var(--cink);overflow:hidden}
+.cover{position:relative;aspect-ratio:.7;min-width:0;min-height:0;container-type:inline-size;background:var(--cbg);color:var(--cink);overflow:hidden}
 .cover img{width:100%;height:100%;object-fit:cover;display:block}
-.cv-frame{display:flex;flex-direction:column;align-items:center;padding:14cqw 11cqw 10cqw;gap:3cqw;text-align:center}
+.cv-frame .cv-in{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;padding:14cqw 11cqw 10cqw;gap:3cqw;text-align:center}
 .cv-frame .ct{font-size:7.5cqw;letter-spacing:.1em;line-height:1.45}
 .cv-frame .ca{font-size:5cqw;letter-spacing:.16em;opacity:.8}
 .cv-frame .art{flex:1;width:100%;margin-top:5cqw;background:var(--cm)}
@@ -247,3 +248,57 @@ body.login-mode .nav,body.login-mode .menu-btn,body.login-mode .lede{display:non
 .foot{position:relative;z-index:1;text-align:center;font-size:11px;color:var(--muted);padding:0 16px calc(28px + env(safe-area-inset-bottom,0px));letter-spacing:.04em}
 .foot a{color:inherit}
 @media (max-width:640px){.top{position:relative}.menu-btn{position:absolute;top:-4px;right:0;padding:6px 12px;font-size:15px}}
+
+/* ===== ホームへ戻る・本の管理画面・削除の確認 ===== */
+.home-link{color:inherit;text-decoration:none}
+.home-link:hover{opacity:.82}
+.dnav{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.dlink{display:flex;align-items:baseline;gap:8px;padding:14px 2px;border:0;border-bottom:1px solid var(--line);background:none;font-family:var(--f-display);font-size:21px;text-align:left;color:var(--ink)}
+.dlink small{font-family:var(--f-body);font-size:11px;color:var(--muted);letter-spacing:.06em}
+.dlink::after{content:"→";margin-left:auto;color:var(--muted);font-size:16px}
+.dnav+.dsec{border-top:0}
+
+.manage{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);background:var(--glass);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid var(--line)}
+.mlist{border-right:1px solid var(--line);display:flex;flex-direction:column;min-width:0}
+.mhead{display:flex;flex-direction:column;gap:12px;padding:24px 20px 12px}
+.mhead h2{font-family:var(--f-display);font-weight:400;font-style:italic;font-size:32px;margin:0;line-height:1}
+.mhead input{font-size:14px;padding:6px 2px}
+.mrows{display:flex;flex-direction:column;max-height:72vh;overflow:auto;padding:0 8px 14px}
+.mbook{display:grid;grid-template-columns:44px minmax(0,1fr);gap:12px;align-items:center;padding:10px;border:0;border-bottom:1px solid var(--line);background:none;text-align:left;color:var(--ink)}
+.mbook .cover{width:44px;box-shadow:0 4px 10px rgba(43,37,35,.14)}
+.mbook .meta{display:flex;flex-direction:column;gap:2px;min-width:0}
+.mbook .t{font-size:13.5px;font-weight:500;line-height:1.5}
+.mbook .a{font-family:var(--f-display);font-size:15px;color:var(--muted);line-height:1.3}
+.mbook .tags{display:flex;gap:4px;flex-wrap:wrap;margin-top:2px}
+.mbook:hover{background:rgba(255,255,255,.5)}
+.mbook[aria-current="true"]{background:rgba(255,255,255,.88)}
+.hint.pad{padding:12px 10px}
+.medit{padding:26px clamp(18px,3vw,36px) 28px;display:flex;flex-direction:column;gap:18px;min-width:0}
+.medit .empty{padding:120px 0}
+.mback{display:none;align-self:flex-start;border:0;background:none;padding:0;font-family:var(--f-display);font-size:18px;color:var(--muted)}
+.mtop{display:flex;gap:16px;align-items:flex-end}
+.mtop .cover{width:96px;flex:none;box-shadow:0 10px 22px rgba(43,37,35,.18)}
+.mtop .spine{height:136px!important;flex:none}
+.mtitle{min-width:0;display:flex;flex-direction:column;gap:4px;padding-bottom:4px}
+.mtitle h3{margin:0;font-weight:500;font-size:18px;line-height:1.5}
+.mtitle .by{margin:0;font-family:var(--f-display);font-style:italic;font-size:18px;color:var(--muted)}
+.mfoot{display:flex;gap:10px;flex-wrap:wrap;justify-content:space-between;border-top:1px solid var(--line);padding-top:18px}
+.btn.danger-btn{background:transparent;color:#8b3f4a;border-color:#c98a93}
+@media (max-width:760px){
+  .manage{grid-template-columns:minmax(0,1fr)}
+  .mlist{border-right:0}
+  .manage.has-sel .mlist{display:none}
+  .manage:not(.has-sel) .medit{display:none}
+  .mback{display:inline-block}
+  .mrows{max-height:none}
+}
+
+.confirm{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(43,37,35,.38);animation:fade .2s ease;
+  padding:max(16px,env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) max(16px,env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
+.confirm-card{width:min(420px,100%);background:var(--cream);padding:30px 28px 24px;box-shadow:0 30px 70px rgba(0,0,0,.25);display:flex;flex-direction:column;gap:12px;align-items:flex-start;animation:place .3s cubic-bezier(.2,.8,.3,1)}
+.confirm-card h2{font-family:var(--f-display);font-style:italic;font-weight:400;font-size:30px;margin:0;line-height:1.1}
+.confirm-card p{margin:0;font-size:14px;line-height:1.8}
+.confirm-card .btns{align-self:stretch;justify-content:flex-end;margin-top:10px}
+.confirm-book .cover{width:64px;box-shadow:0 8px 18px rgba(43,37,35,.18)}
+.confirm-bg{width:64px;aspect-ratio:3/4;background:center/cover;box-shadow:0 0 0 1px var(--line)}
+.btn.danger-solid{background:#8b3f4a;border-color:#8b3f4a;color:#fff}

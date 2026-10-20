@@ -10,7 +10,8 @@ const state = {
   ready: false, user: null, data: null,
   view: "shelf", status: "all", shelf: "all", open: null,
   addTab: "scan", draft: null, msg: "", q: "", results: null, searching: false, saving: false, scanning: false, scanMsg: "",
-  menu: false, menuOpen: {}, mq: "", armed: null, bgSel: null, bookEdit: null, assignMsg: "",
+  menu: false, menuOpen: {}, mq: "", bgSel: null, assignMsg: "",
+  manageSel: null, mfilter: "", confirm: null,
   loginMsg: "", toast: "",
 };
 
@@ -39,7 +40,7 @@ async function done(fn, okMsg) {
 function coverHTML(b, cls = "") {
   const [bg, ink] = inks(b);
   return `<div class="cover cv-frame ${cls}" style="--cbg:${bg};--cink:${ink};--cm:${ink}1a">
-    <div class="ct">${esc(b.title)}</div><div class="ca">${esc(b.author)}</div><div class="art"></div>
+    <div class="cv-in"><div class="ct">${esc(b.title)}</div><div class="ca">${esc(b.author)}</div><div class="art"></div></div>
     ${b.cover ? `<img class="real" src="${esc(b.cover)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}</div>`;
 }
 function spineHTML(b, attrs = "") {
@@ -57,7 +58,7 @@ function renderChrome() {
   $("#count").textContent = D().books.length;
   $("#mode").innerHTML = store.mode === "demo" ? `お試しモード：このブラウザの中だけに保存されます` : "";
   document.querySelectorAll(".tab").forEach(t => t.setAttribute("aria-selected", t.dataset.view === state.view));
-  $("#filters").hidden = state.view === "add";
+  $("#filters").hidden = state.view === "add" || state.view === "manage";
   if (state.status !== "all" && !tagOf(state.status)) state.status = "all";
   if (state.shelf !== "all" && !D().shelves.some(s => s.id === state.shelf)) state.shelf = "all";
   $("#status-chips").innerHTML = `<span class="sc">Tag</span><button class="chip" data-status="all" aria-pressed="${state.status === "all"}">All</button>` +
@@ -88,19 +89,19 @@ function resultRows(list) {
 
 /* ---------- 本を追加 ---------- */
 function renderAdd() {
-  const tabs = [["scan", "バーコード"], ["search", "題名・作者で探す"], ["manual", "自分で入力"]]
+  const tabs = [["scan", "Barcode"], ["search", "Search"], ["manual", "Manual entry"]]
     .map(([k, v]) => `<button class="chip" data-addtab="${k}" aria-pressed="${state.addTab === k}">${v}</button>`).join("");
   let body = "";
   if (state.addTab === "scan") {
     body = `<div class="reader-wrap"><div id="reader" class="reader"></div>
-        ${state.scanning ? "" : `<div class="reader-idle"><button class="btn" data-scan="1">カメラを起動</button><p>本の裏のバーコード（978で始まる方）を枠に入れてください</p></div>`}</div>
+        ${state.scanning ? "" : `<div class="reader-idle"><button class="btn" data-scan="1">Start camera</button><p>本の裏のバーコード（978で始まる方）を枠に入れてください</p></div>`}</div>
       ${state.scanMsg ? `<p class="notice">${esc(state.scanMsg)}</p>` : ""}
       <form class="isbn-form" data-form="isbn"><label for="isbn-in">カメラが使えないときは ISBN（13桁か10桁）
         <input type="text" id="isbn-in" inputmode="numeric" autocomplete="off" placeholder="978…"></label>
-        <button class="btn ghost" type="submit">この番号で探す</button></form>`;
+        <button class="btn ghost" type="submit">Find by ISBN</button></form>`;
   } else if (state.addTab === "search") {
     body = `<form class="isbn-form" data-form="search"><label for="q-in">題名か作者名<input type="search" id="q-in" value="${esc(state.q)}" placeholder="例：川上未映子" enterkeyhint="search"></label>
-        <button class="btn" type="submit" ${state.searching ? "disabled" : ""}>${state.searching ? "探しています…" : "Search"}</button></form>
+        <button class="btn" type="submit" ${state.searching ? "disabled" : ""}>${state.searching ? "Searching…" : "Search"}</button></form>
       <p class="hint">バーコードがわからない本はここから。楽天ブックスで探し、見つからないときは Google Books でも探します。</p>
       <div class="results">${state.results ? (state.results.length ? resultRows(state.results) : `<p class="hint">見つかりませんでした。ことばを変えるか、「自分で入力」から追加してください。</p>`) : ""}</div>`;
   } else {
@@ -120,7 +121,7 @@ function renderAdd() {
       <div class="sec"><span class="sc small">Backdrop · この本の背景</span>${bgStrip(d.backdrop, "draftbg")}</div>
       <div class="sec"><span class="sc small">Tag</span><div class="checks">${D().tags.map(t => `<input type="checkbox" id="f-tag-${t.id}" ${d.tags.includes(t.id) ? "checked" : ""}><label for="f-tag-${t.id}">${esc(t.name)}</label>`).join("")}</div></div>
       <div class="btns"><button class="btn" id="save" ${state.saving ? "disabled" : ""}>${state.saving ? "Placing…" : "Place on the shelf"}</button>
-        ${state.draft ? `<button class="btn ghost" id="clear-draft">入力をやめる</button>` : ""}</div>`;
+        ${state.draft ? `<button class="btn ghost" id="clear-draft">Cancel</button>` : ""}</div>`;
   }
   return `<section class="addbox"><h2>Add a book</h2><div class="chips">${tabs}</div><div class="panel">${body}</div></section>`;
 }
@@ -159,27 +160,90 @@ function manageRows(list, kind, countFn) {
     <input type="text" value="${esc(x.name)}" data-rename="${kind}:${x.id}" aria-label="名前">
     ${kind === "tag" ? `<span class="swatches">${COLORS.map(c => `<button class="sw dot ${c}" data-color="${x.id}:${c}" aria-pressed="${x.color === c}" aria-label="色"></button>`).join("")}</span>` : ""}
     <span class="n">${countFn(x.id)}冊</span>
-    <button class="icon-btn danger" data-del="${kind}:${x.id}">${state.armed === kind + ":" + x.id ? "本当に削除" : "削除"}</button></div>`).join("") +
-    `<form class="mrow" data-form="new-${kind}"><input type="text" id="new-${kind}" placeholder="${kind === "tag" ? "新しいタグ（例：Favorites）" : "新しい本棚（例：Poetry）"}"><button class="icon-btn" type="submit">追加</button></form>`;
+    <button class="icon-btn danger" data-del="${kind}:${x.id}">Delete</button></div>`).join("") +
+    `<form class="mrow" data-form="new-${kind}"><input type="text" id="new-${kind}" placeholder="${kind === "tag" ? "新しいタグ（例：Favorites）" : "新しい本棚（例：Poetry）"}"><button class="icon-btn" type="submit">Add</button></form>`;
 }
-function bookEditor(b) {
-  return `<div class="bookedit">
-    <div class="grid2 tight">
+/* ---------- 本の管理（専用の画面） ---------- */
+function renderManage() {
+  const q = state.mfilter.toLowerCase();
+  const list = D().books.filter(b => !q || (b.title + b.author + b.publisher).toLowerCase().includes(q));
+  const b = state.manageSel && bookOf(state.manageSel);
+  return `<section class="manage ${b ? "has-sel" : ""}">
+    <div class="mlist">
+      <div class="mhead"><h2>Manage books</h2>
+        <input type="search" id="mfilter" value="${esc(state.mfilter)}" placeholder="題名・作者で絞り込む" aria-label="本を絞り込む"></div>
+      <div class="mrows">${list.map(x => `<button class="mbook" data-msel="${x.id}" aria-current="${x.id === state.manageSel}">${coverHTML(x)}
+        <span class="meta"><span class="t">${titleHTML(x.title)}</span><span class="a">${esc(x.author)}</span><span class="tags">${pills(x)}</span></span></button>`).join("")
+        || `<p class="hint pad">見つかりませんでした。</p>`}</div>
+    </div>
+    <div class="medit">${b ? manageEditor(b) : `<p class="empty">Choose a book to edit.</p>`}</div>
+  </section>`;
+}
+function manageEditor(b) {
+  return `<button class="mback" data-mback="1">← All books</button>
+    <div class="mtop">${coverHTML(b)}${spineHTML(b, 'tabindex="-1" aria-hidden="true" disabled')}
+      <div class="mtitle"><span class="sc small">${esc(shelfName(b.shelf))}</span><h3>${titleHTML(b.title)}</h3><p class="by">${esc(b.author)}</p></div></div>
+    <div class="grid2">
       <label for="e-title">題名<input type="text" id="e-title" value="${esc(b.title)}" data-edit="title"></label>
       <label for="e-author">作者<input type="text" id="e-author" value="${esc(b.author)}" data-edit="author"></label>
       <label for="e-pub">出版社<input type="text" id="e-pub" value="${esc(b.publisher)}" data-edit="publisher"></label>
+      <label for="e-isbn">ISBN<input type="text" id="e-isbn" inputmode="numeric" value="${esc(b.isbn)}" data-edit="isbn"></label>
       <label for="e-shelf">本棚<select id="e-shelf" data-edit="shelf">${D().shelves.map(s => `<option value="${s.id}" ${s.id === b.shelf ? "selected" : ""}>${esc(s.name)}</option>`).join("")}<option value="" ${!b.shelf ? "selected" : ""}>未分類</option></select></label>
     </div>
-    <span class="sc small">Backdrop · この本の背景</span>${bgStrip(b.backdrop, "bookbg")}
-    <div class="filebtns">
-      <label class="icon-btn file">表紙を変える<input type="file" accept="image/*" data-bookimg="cover"></label>
-      <label class="icon-btn file">背表紙の写真${b.spine ? "を変える" : "を入れる"}<input type="file" accept="image/*" data-bookimg="spine"></label>
-      ${b.spine ? `<button class="icon-btn" data-unspine="1">背表紙の写真を外す</button>` : ""}
-    </div>
-    <div class="filebtns"><button class="icon-btn" data-open="${b.id}">この本を開いて確かめる</button>
-      <button class="icon-btn danger" data-del="book:${b.id}">${state.armed === "book:" + b.id ? "本当に削除" : "この本を削除"}</button></div>
-  </div>`;
+    <p class="hint">入力欄は、ほかの場所をタップすると保存されます。</p>
+    <div class="sec"><span class="sc small">Tag</span><div class="chips">${D().tags.map(t => `<button class="chip" data-mtag="${t.id}" aria-pressed="${b.tags.includes(t.id)}">${esc(t.name)}</button>`).join("")}</div></div>
+    <div class="sec"><span class="sc small">Backdrop · この本の背景</span>${bgStrip(b.backdrop, "bookbg")}</div>
+    <div class="sec"><span class="sc small">Photos</span><div class="filebtns">
+      <label class="icon-btn file">Change cover<input type="file" accept="image/*" data-bookimg="cover"></label>
+      <label class="icon-btn file">${b.spine ? "Change spine photo" : "Add spine photo"}<input type="file" accept="image/*" data-bookimg="spine"></label>
+      ${b.spine ? `<button class="icon-btn" data-unspine="1">Remove spine photo</button>` : ""}</div></div>
+    <div class="mfoot"><button class="btn ghost" data-open="${b.id}">Open this book</button>
+      <button class="btn danger-btn" data-del="book:${b.id}">Delete this book</button></div>`;
 }
+
+/* ---------- 削除の確認（画面の真ん中に出す） ---------- */
+function confirmInfo(c) {
+  if (c.kind === "book") { const b = bookOf(c.id); return { title: "Delete this book?", body: `「${b.title}」を本棚から削除します。この操作は取り消せません。`, ok: "Delete", book: b }; }
+  if (c.kind === "tag") { const t = tagOf(c.id), n = D().books.filter(b => b.tags.includes(c.id)).length; return { title: "Delete this tag?", body: `タグ「${t.name}」を削除します。${n ? `${n}冊の本からこのタグが外れます。` : ""}本は消えません。`, ok: "Delete" }; }
+  if (c.kind === "shelf") { const s = D().shelves.find(x => x.id === c.id), n = D().books.filter(b => b.shelf === c.id).length; return { title: "Delete this shelf?", body: `本棚「${s.name}」を削除します。${n ? `入っている${n}冊は「未分類」になります。` : ""}本は消えません。`, ok: "Delete" }; }
+  if (c.kind === "bg") { const n = D().books.filter(b => b.backdrop === c.id).length; return { title: "Delete this backdrop?", body: `この背景の写真を削除します。${n ? `${n}冊の本の背景は、サイトの背景に戻ります。` : ""}`, ok: "Delete", bg: D().backdrops.find(x => x.id === c.id) }; }
+  return { title: "Reset demo data?", body: "お試しのデータを最初の状態に戻します。追加した本や写真は消えます。", ok: "Reset" };
+}
+function renderConfirm() {
+  const root = $("#confirm-root"), c = state.confirm;
+  if (!c) { root.innerHTML = ""; return; }
+  const i = confirmInfo(c);
+  root.innerHTML = `<div class="confirm" data-confirm-cancel="1"><div class="confirm-card" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-body">
+    ${i.book ? `<div class="confirm-book">${coverHTML(i.book)}</div>` : ""}${i.bg ? `<div class="confirm-bg" style="background-image:url('${i.bg.thumb}')"></div>` : ""}
+    <h2 id="confirm-title">${i.title}</h2><p id="confirm-body">${esc(i.body)}</p>
+    <div class="btns"><button class="btn ghost" data-confirm-cancel="1" id="confirm-cancel">Cancel</button><button class="btn danger-solid" data-confirm-ok="1">${i.ok}</button></div>
+  </div></div>`;
+  $("#confirm-cancel").focus();
+}
+async function runConfirmed(c) {
+  const { kind, id } = c;
+  if (kind === "tag" && await done(() => store.deleteTag(id), "タグを削除しました")) { D().tags = D().tags.filter(x => x.id !== id); D().books.forEach(b => b.tags = b.tags.filter(x => x !== id)); }
+  if (kind === "shelf" && await done(() => store.deleteShelf(id), "本棚を削除しました")) { D().shelves = D().shelves.filter(x => x.id !== id); D().books.forEach(b => { if (b.shelf === id) b.shelf = null; }); }
+  if (kind === "book") { const b = bookOf(id);
+    if (await done(() => store.deleteBook(id), `「${b.title}」を削除しました`)) {
+      if (store.removeImage) { store.removeImage(b.cover).catch(() => {}); store.removeImage(b.spine).catch(() => {}); }
+      D().books = D().books.filter(x => x.id !== id); if (state.manageSel === id) state.manageSel = null; if (state.open === id) state.open = null; } }
+  if (kind === "bg") {
+    if (D().backdrops.length < 2) return;
+    const bd = D().backdrops.find(b => b.id === id);
+    if (D().siteBackdrop === id) { const next = D().backdrops.find(b => b.id !== id); D().siteBackdrop = next.id; await attempt(() => store.setSiteBackdrop(next.id)); }
+    if (await done(() => store.deleteBackdrop(bd), "背景の写真を削除しました")) {
+      D().backdrops = D().backdrops.filter(b => b.id !== id); D().books.forEach(b => { if (b.backdrop === id) b.backdrop = null; }); state.bgSel = null; }
+  }
+  if (kind === "reset") { store.reset(); location.reload(); return; }
+  rerender();
+}
+function goHome() {
+  stopScanner();
+  Object.assign(state, { view: "shelf", status: "all", shelf: "all", open: null, menu: false, scanning: false });
+  render(); window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
 function renderDrawer() {
   const root = $("#drawer-root");
   if (!state.menu) { root.innerHTML = ""; return; }
@@ -190,15 +254,11 @@ function renderDrawer() {
   root.innerHTML = `<div class="scrim" data-menuclose="1"></div>
   <aside class="drawer" role="dialog" aria-modal="true" aria-label="メニュー">
     <div class="drawer-head"><h2>Menu</h2><button class="closer" data-menuclose="1" aria-label="閉じる">×</button></div>
+    <nav class="dnav"><button class="dlink" data-go="home">Home <small>本棚に戻る</small></button>
+      <button class="dlink" data-go="manage">Manage books <small>本の管理</small></button></nav>
     <details class="dsec" data-sec="search" ${o("search")}><summary>Search <small>本を探す</small></summary><div class="dbody">
       <input type="search" id="mq" value="${esc(state.mq)}" placeholder="題名・作者・出版社">
       <div class="sresults">${state.mq ? (hits.map(b => `<button class="sres" data-open="${b.id}">${coverHTML(b)}<span><span class="t">${titleHTML(b.title)}</span><br><span class="a">${esc(b.author)}</span></span></button>`).join("") || `<p class="hint">本棚に見つかりませんでした。</p>`) : `<p class="hint">本棚に入っている本から探します。</p>`}</div>
-    </div></details>
-    <details class="dsec" data-sec="books" ${o("books")}><summary>Books <small>本の管理</small></summary><div class="dbody">
-      <p class="hint">本をタップすると、情報の修正、背景や表紙・背表紙の写真の変更、削除ができます。左の小さな写真が今の背景です。</p>
-      <div>${D().books.map(b => { const bg = bgOf(b.backdrop); return `<div class="bookitem"><button class="bookrow" data-bookedit="${b.id}" aria-expanded="${state.bookEdit === b.id}">
-        <span class="bthumb" style="${bg ? `background-image:url('${bg.thumb}')` : ""}"></span><span class="t">${titleHTML(b.title)}</span><span class="a">${esc(b.author)}</span></button>
-        ${state.bookEdit === b.id ? bookEditor(b) : ""}</div>`; }).join("")}</div>
     </div></details>
     <details class="dsec" data-sec="tags" ${o("tags")}><summary>Tags <small>タグの管理</small></summary><div class="dbody">
       ${manageRows(D().tags, "tag", id => D().books.filter(b => b.tags.includes(id)).length)}
@@ -210,16 +270,16 @@ function renderDrawer() {
       <p class="hint">写真をタップして選ぶと、サイト全体の背景にしたり、本の背景に設定したり、削除したりできます。</p>
       <div class="bggrid">${D().backdrops.map(b => `<button class="bgcell" style="background-image:url('${b.thumb}')" data-bgsel="${b.id}" aria-pressed="${b.id === state.bgSel}" aria-label="背景">${b.id === D().siteBackdrop ? '<span class="tag">サイト</span>' : ""}</button>`).join("")}
         <label class="bgcell add" title="写真を追加">＋<input type="file" accept="image/*" data-upload="lib"></label></div>
-      ${sel ? `<div class="bgtools"><button class="icon-btn" data-setsite="${sel.id}">サイトの背景にする</button>
-        <button class="icon-btn danger" data-delbg="${sel.id}" ${D().backdrops.length < 2 ? "disabled" : ""}>${state.armed === "bg:" + sel.id ? "本当に削除" : "削除"}</button>
+      ${sel ? `<div class="bgtools"><button class="icon-btn" data-setsite="${sel.id}">Use as site backdrop</button>
+        <button class="icon-btn danger" data-delbg="${sel.id}" ${D().backdrops.length < 2 ? "disabled" : ""}>Delete</button>
         <span class="hint">${used}冊がこの背景を使っています</span></div>
         <form class="assign" data-form="assign"><select id="assign-book" aria-label="本を選ぶ">${D().books.map(b => `<option value="${b.id}">${esc(b.title)}</option>`).join("")}</select>
-          <button class="icon-btn" type="submit">この本の背景にする</button></form>
+          <button class="icon-btn" type="submit">Set for this book</button></form>
         ${state.assignMsg ? `<p class="hint">${esc(state.assignMsg)}</p>` : ""}` : ""}
     </div></details>
     <div class="dfoot">${store.mode === "demo"
-      ? `<p class="hint">お試しモードです。Supabase を設定すると、どの端末からでも同じ本棚が見られるようになります（README を参照）。</p><button class="icon-btn danger" data-reset="1">${state.armed === "reset" ? "本当に最初に戻す" : "お試しのデータを最初に戻す"}</button>`
-      : `<p class="hint">${esc(state.user?.email || "")} でログイン中</p><button class="icon-btn" data-signout="1">ログアウト</button>`}</div>
+      ? `<p class="hint">お試しモードです。Supabase を設定すると、どの端末からでも同じ本棚が見られるようになります（README を参照）。</p><button class="icon-btn danger" data-reset="1">Reset demo data</button>`
+      : `<p class="hint">${esc(state.user?.email || "")} でログイン中</p><button class="icon-btn" data-signout="1">Sign out</button>`}</div>
   </aside>`;
 }
 
@@ -229,7 +289,7 @@ function renderLogin() {
   $("#main").innerHTML = `<section class="addbox login"><h2>Welcome back</h2>
     <p class="hint">登録したメールアドレスにログイン用のリンクを送ります。届いたメールのリンクを開くと、本棚が表示されます。</p>
     <form class="isbn-form" data-form="login"><label for="login-email">メールアドレス<input type="email" id="login-email" autocomplete="email" required></label>
-      <button class="btn" type="submit">リンクを送る</button></form>
+      <button class="btn" type="submit">Send link</button></form>
     ${state.loginMsg ? `<p class="notice">${esc(state.loginMsg)}</p>` : ""}</section>`;
 }
 function renderToast() { $("#toast").textContent = state.toast; $("#toast").hidden = !state.toast; }
@@ -239,10 +299,10 @@ function render() {
   if (isCloud && !state.user) { renderLogin(); return; }
   document.body.classList.remove("login-mode");
   renderChrome();
-  $("#main").innerHTML = state.view === "shelf" ? renderShelf() : state.view === "list" ? renderList() : renderAdd();
-  renderSheet(); renderDrawer();
+  $("#main").innerHTML = state.view === "shelf" ? renderShelf() : state.view === "list" ? renderList() : state.view === "manage" ? renderManage() : renderAdd();
+  renderSheet(); renderDrawer(); renderConfirm();
 }
-function keepScroll(fn) { const d = $(".drawer"), y = d ? d.scrollTop : 0; fn(); const n = $(".drawer"); if (n) n.scrollTop = y; }
+function keepScroll(fn) { const d = $(".drawer"), m = $(".mrows"), y = d ? d.scrollTop : 0, my = m ? m.scrollTop : 0; fn(); const n = $(".drawer"), nm = $(".mrows"); if (n) n.scrollTop = y; if (nm) nm.scrollTop = my; }
 const rerender = () => keepScroll(render);
 
 /* ---------- 本の情報を探す ---------- */
@@ -294,8 +354,8 @@ async function saveDraft() {
   }
   render();
 }
-async function patchBook(id, patch) {
-  const b = await attempt(() => store.updateBook(id, patch));
+async function patchBook(id, patch, okMsg) {
+  const b = await attempt(() => store.updateBook(id, patch), okMsg);
   if (b) Object.assign(bookOf(id), b);
   rerender();
 }
@@ -303,12 +363,17 @@ async function patchBook(id, patch) {
 /* ---------- 操作 ---------- */
 document.addEventListener("click", async e => {
   if (e.target.closest("summary")) { const det = e.target.closest("details"); setTimeout(() => { state.menuOpen[det.dataset.sec] = det.open; }, 0); return; }
-  const t = e.target.closest("button,.scrim"); if (!t || t.disabled) return;
+  if (e.target.closest("#home-link")) { e.preventDefault(); goHome(); return; }
+  const t = e.target.closest("button,.scrim,.confirm"); if (!t || t.disabled) return;
   const d = t.dataset;
-  if (state.armed && !(d.del || d.delbg || d.reset)) state.armed = null;
+
+  // 削除の確認
+  if (d.confirmOk) { const c = state.confirm; state.confirm = null; renderConfirm(); runConfirmed(c); return; }
+  if (d.confirmCancel) { if (t.classList.contains("confirm") && e.target !== t) return; state.confirm = null; renderConfirm(); return; }
+  if (d.go) { if (d.go === "home") { goHome(); return; } stopScanner(); state.view = "manage"; state.menu = false; state.open = null; render(); window.scrollTo({ top: 0 }); return; }
 
   if (t.id === "menu-open") { state.menu = true; render(); $(".closer")?.focus(); return; }
-  if (d.menuclose) { state.menu = false; state.armed = null; render(); $("#menu-open")?.focus(); return; }
+  if (d.menuclose) { state.menu = false; render(); $("#menu-open")?.focus(); return; }
   if (d.view) { if (d.view !== "add") stopScanner(); state.scanning = false; state.view = d.view; render(); return; }
   if (d.status) { state.status = d.status; render(); return; }
   if (d.shelf) { state.shelf = d.shelf; render(); return; }
@@ -327,40 +392,21 @@ document.addEventListener("click", async e => {
   if (t.id === "clear-draft") { state.draft = null; state.msg = ""; render(); return; }
 
   // 本の管理
-  if (d.bookedit) { state.bookEdit = state.bookEdit === d.bookedit ? null : d.bookedit; rerender(); return; }
-  if (d.bookbg) { patchBook(state.bookEdit, { backdrop: d.bookbg }); return; }
-  if (d.unspine) { patchBook(state.bookEdit, { spine: "" }); return; }
+  if (d.msel) { state.manageSel = d.msel; rerender(); if (matchMedia("(max-width:760px)").matches) window.scrollTo({ top: $(".manage").offsetTop - 12 }); return; }
+  if (d.mback) { state.manageSel = null; render(); return; }
+  if (d.mtag) { const b = bookOf(state.manageSel), k = d.mtag; patchBook(b.id, { tags: b.tags.includes(k) ? b.tags.filter(x => x !== k) : [...b.tags, k] }); return; }
+  if (d.bookbg) { patchBook(state.manageSel, { backdrop: d.bookbg }, "背景を変えました"); return; }
+  if (d.unspine) { patchBook(state.manageSel, { spine: "" }, "背表紙の写真を外しました"); return; }
 
   // タグ・本棚
   if (d.color) { const [id, c] = d.color.split(":"); tagOf(id).color = c; rerender(); attempt(() => store.updateTag(id, { color: c })); return; }
-  if (d.del) {
-    if (state.armed !== d.del) { state.armed = d.del; rerender(); return; }
-    state.armed = null;
-    const [k, id] = d.del.split(":");
-    if (k === "tag" && await done(() => store.deleteTag(id))) { D().tags = D().tags.filter(x => x.id !== id); D().books.forEach(b => b.tags = b.tags.filter(x => x !== id)); }
-    if (k === "shelf" && await done(() => store.deleteShelf(id))) { D().shelves = D().shelves.filter(x => x.id !== id); D().books.forEach(b => { if (b.shelf === id) b.shelf = null; }); }
-    if (k === "book") { const b = bookOf(id);
-      if (await done(() => store.deleteBook(id), `「${b.title}」を削除しました`)) {
-        if (store.removeImage) { store.removeImage(b.cover).catch(() => {}); store.removeImage(b.spine).catch(() => {}); }
-        D().books = D().books.filter(x => x.id !== id); state.bookEdit = null; if (state.open === id) state.open = null; } }
-    rerender(); return;
-  }
+  if (d.del) { const [kind, id] = d.del.split(":"); state.confirm = { kind, id }; renderConfirm(); return; }
 
   // 背景
   if (d.bgsel) { state.bgSel = d.bgsel; state.assignMsg = ""; rerender(); return; }
   if (d.setsite) { D().siteBackdrop = d.setsite; rerender(); attempt(() => store.setSiteBackdrop(d.setsite), "サイトの背景を変えました"); return; }
-  if (d.delbg) {
-    const id = d.delbg; if (D().backdrops.length < 2) return;
-    if (state.armed !== "bg:" + id) { state.armed = "bg:" + id; rerender(); return; }
-    state.armed = null;
-    const bd = D().backdrops.find(b => b.id === id);
-    if (D().siteBackdrop === id) { const next = D().backdrops.find(b => b.id !== id); D().siteBackdrop = next.id; await attempt(() => store.setSiteBackdrop(next.id)); }
-    if (!await done(() => store.deleteBackdrop(bd), "背景の写真を削除しました")) { rerender(); return; }
-    D().backdrops = D().backdrops.filter(b => b.id !== id); D().books.forEach(b => { if (b.backdrop === id) b.backdrop = null; });
-    state.bgSel = null; rerender(); return;
-  }
-
-  if (d.reset) { if (state.armed !== "reset") { state.armed = "reset"; rerender(); return; } store.reset(); location.reload(); return; }
+  if (d.delbg) { if (D().backdrops.length < 2) return; state.confirm = { kind: "bg", id: d.delbg }; renderConfirm(); return; }
+  if (d.reset) { state.confirm = { kind: "reset" }; renderConfirm(); return; }
   if (d.signout) { await store.signOut(); location.reload(); return; }
 });
 
@@ -400,6 +446,7 @@ document.addEventListener("submit", async e => {
 });
 
 document.addEventListener("input", e => {
+  if (e.target.id === "mfilter") { const p = e.target.selectionStart; state.mfilter = e.target.value; rerender(); const q = $("#mfilter"); q.focus(); try { q.setSelectionRange(p, p); } catch (err) {} return; }
   if (e.target.id === "mq") { const p = e.target.selectionStart; state.mq = e.target.value; rerender(); const q = $("#mq"); q.focus(); try { q.setSelectionRange(p, p); } catch (err) {} }
 });
 
@@ -414,7 +461,7 @@ document.addEventListener("change", async e => {
   if (t.dataset.edit) {
     const key = t.dataset.edit, v = t.value.trim();
     if (key === "title" && !v) { toast("題名は空にできません"); rerender(); return; }
-    patchBook(state.bookEdit, { [key]: key === "shelf" ? (v || null) : v }); return;
+    patchBook(state.manageSel, { [key]: key === "shelf" ? (v || null) : v }, "保存しました"); return;
   }
   const file = t.files?.[0]; if (!file) return;
   if (t.id === "f-img" || t.id === "f-spine") {
@@ -422,7 +469,7 @@ document.addEventListener("change", async e => {
     state.draft = { ...dr, [key + "Blob"]: file, [key + "Preview"]: URL.createObjectURL(file) }; render(); return;
   }
   if (t.dataset.bookimg) {
-    const id = state.bookEdit, kind = t.dataset.bookimg;
+    const id = state.manageSel, kind = t.dataset.bookimg;
     toast("写真を保存しています…");
     const ok = await attempt(async () => {
       if (kind === "cover") { const c = await prepareCover({ coverBlob: file }); return store.updateBook(id, c); }
@@ -437,7 +484,7 @@ document.addEventListener("change", async e => {
     const bd = await attempt(() => store.addBackdrop(file, D().backdrops.length), "背景の写真を追加しました");
     if (!bd) return;
     D().backdrops.push(bd);
-    if (where === "bookbg") { await patchBook(state.bookEdit, { backdrop: bd.id }); return; }
+    if (where === "bookbg") { await patchBook(state.manageSel, { backdrop: bd.id }); return; }
     if (where === "draftbg") state.draft = { ...dr, backdrop: bd.id };
     if (where === "lib") state.bgSel = bd.id;
     rerender();
@@ -446,6 +493,7 @@ document.addEventListener("change", async e => {
 
 document.addEventListener("keydown", e => {
   if (e.key !== "Escape") return;
+  if (state.confirm) { state.confirm = null; renderConfirm(); return; }
   if (state.menu) { state.menu = false; render(); } else if (state.open) { state.open = null; renderSheet(); }
 });
 let rt; addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(fitTitle, 120); });
@@ -453,9 +501,15 @@ let rt; addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(fit
 /* ---------- はじまり ---------- */
 async function boot() {
   try {
+    // 読み込みは同時に1回だけ（ログイン直後に2回走って、初期データが二重に入るのを防ぐ）
+    let loading = null;
+    const loadOnce = () => (loading ??= store.load().finally(() => { setTimeout(() => { loading = null; }, 0); }));
     state.user = await store.init();
-    store.onAuthChange(async u => { const was = !!state.user; state.user = u; if (u && !was) { state.data = await store.load(); render(); } });
-    if (!isCloud || state.user) state.data = await store.load();
+    store.onAuthChange(async u => {
+      const was = !!state.user; state.user = u;
+      if (u && !was && !state.data) { state.data = await loadOnce(); state.ready = true; render(); }
+    });
+    if (!isCloud || state.user) state.data = await loadOnce();
     state.ready = true; render();
   } catch (e) {
     console.error(e);

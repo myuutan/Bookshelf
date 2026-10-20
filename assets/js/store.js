@@ -61,9 +61,13 @@ class CloudStore {
     if (error) throw new Error(error.message.includes("Signups not allowed") ? "このメールアドレスは登録されていません。" : error.message);
   }
   async signOut() { await this.sb.auth.signOut(); }
-  async q(p) { const { data, error } = await p; if (error) throw new Error(error.message); return data; }
+  async q(p) {
+    const { data, error } = await p;
+    if (error) throw new Error(error.code === "23505" ? "同じ名前のものがすでにあります。別の名前にしてください。" : error.message);
+    return data;
+  }
 
-  async load() {
+  async load(allowSeed = true) {
     let [books, tags, shelves, backdrops, settings] = await Promise.all([
       this.q(this.sb.from("books").select("*").order("created_at")),
       this.q(this.sb.from("tags").select("*").order("position").order("created_at")),
@@ -71,17 +75,22 @@ class CloudStore {
       this.q(this.sb.from("backdrops").select("*").order("position").order("created_at")),
       this.q(this.sb.from("settings").select("*").maybeSingle()),
     ]);
-    if (!tags.length && !shelves.length && !backdrops.length) return this.seed();
+    if (allowSeed && !tags.length && !shelves.length && !backdrops.length) return this.seed();
     return {
       books: books.map(fromRow.book), tags: tags.map(fromRow.tag), shelves: shelves.map(fromRow.shelf),
       backdrops: backdrops.map(fromRow.backdrop), siteBackdrop: settings?.site_backdrop_id || backdrops[0]?.id || null,
     };
   }
   // はじめてログインしたときに、タグ・本棚・背景・最初の1冊を入れる
+  // 同じ名前のタグなどは作らない（データベース側の「重複禁止」の決まりと合わせて、二重に入らないようにする）
   async seed() {
-    const tags = await this.q(this.sb.from("tags").insert(DEFAULT_TAGS.map((t, i) => ({ ...t, position: i }))).select());
-    const shelves = await this.q(this.sb.from("shelves").insert(DEFAULT_SHELVES.map((name, i) => ({ name, position: i }))).select());
-    const backdrops = await this.q(this.sb.from("backdrops").insert(BUILTIN_BACKDROPS).select());
+    const ignore = cols => ({ onConflict: cols, ignoreDuplicates: true });
+    const tags = await this.q(this.sb.from("tags").upsert(DEFAULT_TAGS.map((t, i) => ({ ...t, position: i })), ignore("user_id,name")).select());
+    // タグが1つも新しく入らなかった＝別の画面がすでに準備した。読み込み直すだけにする
+    if (!tags.length) return this.load(false);
+    const shelves = await this.q(this.sb.from("shelves").upsert(DEFAULT_SHELVES.map((name, i) => ({ name, position: i })), ignore("user_id,name")).select());
+    const backdrops = await this.q(this.sb.from("backdrops").upsert(BUILTIN_BACKDROPS, ignore("user_id,src")).select());
+    if (shelves.length < DEFAULT_SHELVES.length || backdrops.length < BUILTIN_BACKDROPS.length) return this.load(false);
     backdrops.sort((a, b) => a.position - b.position);
     const site = backdrops[3]?.id || backdrops[0]?.id;
     await this.q(this.sb.from("settings").upsert({ site_backdrop_id: site }));
@@ -89,7 +98,7 @@ class CloudStore {
       title: FIRST_BOOK.title, author: FIRST_BOOK.author, publisher: FIRST_BOOK.publisher, source: "manual",
       tag_ids: [tags.find(t => t.name === FIRST_BOOK.tag).id], shelf_id: shelves.find(s => s.name === FIRST_BOOK.shelf).id, backdrop_id: backdrops[0].id,
     }));
-    return this.load();
+    return this.load(false);
   }
 
   async addBook(b) { return fromRow.book(await this.q(this.sb.from("books").insert(toBookRow(b)).select().single())); }
