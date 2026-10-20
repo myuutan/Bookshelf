@@ -1,7 +1,7 @@
 // Petite Bibliothèque の画面
-import { store, isCloud } from "./store.js?v=20261021b";
-import { esc, titleHTML, hash, paletteFor, shrink, spineColorsFrom, normalizeIsbn } from "./util.js?v=20261021b";
-import { startScanner, stopScanner } from "./scanner.js?v=20261021b";
+import { store, isCloud } from "./store.js?v=20261021c";
+import { esc, titleHTML, hash, paletteFor, shrink, spineColorsFrom, normalizeIsbn } from "./util.js?v=20261021c";
+import { startScanner, stopScanner } from "./scanner.js?v=20261021c";
 
 const COLORS = ["c-rose", "c-gold", "c-ink", "c-sage", "c-sky"];
 const $ = s => document.querySelector(s);
@@ -48,14 +48,22 @@ const OC_KEY = "pb-opencover-v1";
 const OC = (() => { try { return new Map(Object.entries(JSON.parse(localStorage.getItem(OC_KEY)) || {})); } catch (e) { return new Map(); } })();
 const saveOC = () => { try { localStorage.setItem(OC_KEY, JSON.stringify(Object.fromEntries(OC))); } catch (e) {} };
 const ocUrl = isbn => `https://image.opencover.jp/v1/cover/spine/${isbn}.webp`;
-const ocWidth = (h, ratio) => Math.round(Math.max(16, Math.min(64, h * ratio)));
+// 画像の縦横の比率を保ったまま、棚に収まる大きさにする（比率を変えないので背表紙が切れない）
+const ocSize = (h, ratio) => {
+  let w = h * ratio;
+  if (w < 14) { w = 14; h = w / ratio; }
+  if (w > 64) { w = 64; h = w / ratio; }
+  if (h > 250) { h = 250; w = h * ratio; }
+  return { w: Math.round(w), h: Math.round(h) };
+};
 window.__ocSpine = img => {
   const isbn = img.dataset.isbn, w = img.naturalWidth, h = img.naturalHeight;
   // 背表紙らしい縦長の画像でなければ、対応していないとみなす
   if (!w || !h || h < w * 2.5) { OC.set(isbn, 0); saveOC(); img.remove(); return; }
   OC.set(isbn, +(w / h).toFixed(4)); saveOC();
   const sp = img.closest(".spine"); if (!sp) return;
-  sp.style.width = ocWidth(parseFloat(sp.style.height), w / h) + "px"; sp.classList.add("oc-on");
+  const base = parseFloat(sp.dataset.h || sp.style.height), size = ocSize(base, w / h);
+  sp.style.width = size.w + "px"; sp.style.height = size.h + "px"; sp.classList.add("oc-on");
 };
 window.__ocFail = img => { OC.set(img.dataset.isbn, 0); saveOC(); img.remove(); };
 function spineHTML(b, attrs = "") {
@@ -63,10 +71,11 @@ function spineHTML(b, attrs = "") {
   const isbn = !b.spine && /^97[89]\d{10}$/.test(b.isbn || "") ? b.isbn : "";
   const known = isbn ? OC.get(isbn) : undefined;
   const useOc = isbn && known !== 0;
-  if (useOc && known) w = ocWidth(h, known);
+  const baseH = h;
+  if (useOc && known) ({ w, h } = ocSize(h, known));
   const oc = useOc ? `<img class="oc" alt="" data-isbn="${isbn}" src="${ocUrl(isbn)}" loading="lazy" onload="__ocSpine(this)" onerror="__ocFail(this)">` : "";
   const style = b.spine ? `width:${w}px;height:${h}px;background-image:url('${esc(b.spine)}')` : `width:${w}px;height:${h}px;background-color:${bg};color:${ink}`;
-  return `<button class="spine ${b.spine ? "photo" : ""} ${lean ? "lean" : ""} ${useOc && known ? "oc-on" : ""}" style="${style}" ${attrs} aria-label="${esc(b.title)}（${esc(b.author)}）">
+  return `<button class="spine ${b.spine ? "photo" : ""} ${lean ? "lean" : ""} ${useOc && known ? "oc-on" : ""}" style="${style}" data-h="${baseH}" ${attrs} aria-label="${esc(b.title)}（${esc(b.author)}）">
     <span class="rule"></span><span class="st">${esc(b.title)}</span><span class="sa">${esc(b.author)}</span><span class="rule"></span>${oc}</button>`;
 }
 const pills = b => b.tags.map(tagOf).filter(Boolean).map(t => `<span class="pill ${t.color}">${esc(t.name)}</span>`).join("");
@@ -122,7 +131,8 @@ function renderAdd() {
   } else if (state.addTab === "search") {
     body = `<form class="isbn-form" data-form="search"><label for="q-in">題名か作者名<input type="search" id="q-in" value="${esc(state.q)}" placeholder="例：川上未映子" enterkeyhint="search"></label>
         <button class="btn" type="submit" ${state.searching ? "disabled" : ""}>${state.searching ? "Searching…" : "Search"}</button></form>
-      <p class="hint">バーコードがわからない本はここから。楽天ブックスで探し、見つからないときは Google Books でも探します。</p>
+      <p class="hint">題名や作者の一部でも探せます。楽天ブックスで探し、見つからないときは Google Books でも探します。</p>
+      <p class="hint">手元に本があるなら、<button class="linkish" data-addtab="scan">Barcode</button> から裏のバーコードを読み取るほうが確実です。</p>
       <div class="results">${state.results ? (state.results.length ? resultRows(state.results) : `<p class="hint">見つかりませんでした。ことばを変えるか、「自分で入力」から追加してください。</p>`) : ""}</div>`;
   } else {
     const d = state.draft || blankDraft();

@@ -3,8 +3,8 @@
 // ・設定がなければ「お試し」：このブラウザの中だけに保存（見本の本入り）
 // 画面側（app.js）はどちらでも同じ書き方で使えるようにしています。
 
-import { SUPABASE_URL, SUPABASE_ANON_KEY, IMAGE_BUCKET } from "./config.js?v=20261021b";
-import { uid, blobToDataURL, shrink } from "./util.js?v=20261021b";
+import { SUPABASE_URL, SUPABASE_ANON_KEY, IMAGE_BUCKET } from "./config.js?v=20261021c";
+import { uid, blobToDataURL, shrink } from "./util.js?v=20261021c";
 
 const BUILTIN_BACKDROPS = Array.from({ length: 10 }, (_, i) => ({
   src: `assets/backdrops/bg${i + 1}.jpg`, thumb: `assets/backdrops/t${i + 1}.jpg`, builtin: true, position: i,

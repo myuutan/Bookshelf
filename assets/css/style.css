@@ -308,3 +308,5 @@ body.login-mode .nav,body.login-mode .menu-btn,body.login-mode .lede{display:non
 .spine.oc-on img.oc{opacity:1}
 .spine.oc-on .st,.spine.oc-on .sa,.spine.oc-on .rule{visibility:hidden}
 .notice.warn{background:#f6ead6;color:#6b4d22}
+.spine.oc-on img.oc{object-fit:fill}
+.linkish{border:0;background:none;padding:0;font:inherit;color:var(--ink);text-decoration:underline;text-underline-offset:3px;cursor:pointer}

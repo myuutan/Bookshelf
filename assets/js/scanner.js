@@ -1,7 +1,7 @@
 // スマホのカメラで本の裏のバーコード（ISBN）を読み取る
 // html5-qrcode（index.html で読み込み）を使います。カメラは https のページでだけ使えます。
 
-import { normalizeIsbn } from "./util.js?v=20261021b";
+import { normalizeIsbn } from "./util.js?v=20261021c";
 
 let scanner = null;
 
