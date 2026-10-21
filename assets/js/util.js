@@ -12,7 +12,8 @@ export function phrases(s) {
   const out = [];
   for (const g of segs) {
     const prev = out[out.length - 1];
-    const glue = prev && !/[。、！？]$/.test(prev) && (isH(g) || /^[、。・！？」』）\s]+$/u.test(g) || (isK(g[0]) && isK(prev[prev.length - 1])) || /[「『（]$/.test(prev));
+    const inQuote = prev && prev.lastIndexOf("「") > prev.lastIndexOf("」") && prev.length + g.length <= 20; // 短い「」の中は切らない
+    const glue = prev && !/[。、！？]$/.test(prev) && (isH(g) || /^[、。・！？」』）\s]+$/u.test(g) || (isK(g[0]) && isK(prev[prev.length - 1])) || /[「『（]$/.test(prev) || /\d$/.test(prev) || inQuote);
     const punct = prev && /^[、。！？」』）]+$/u.test(g);
     if (glue || punct) out[out.length - 1] += g; else out.push(g);
   }
@@ -96,3 +97,41 @@ export function normalizeIsbn(input) {
 }
 
 export const uid = () => (crypto.randomUUID ? crypto.randomUUID() : "id-" + Date.now() + "-" + Math.random().toString(16).slice(2));
+
+/* 文章を意味のまとまりで折り返す（案内文や確認の文章用）。文ごとに改行したいときは配列で渡す */
+export const proseHTML = text => (Array.isArray(text) ? text : [text]).filter(Boolean)
+  .map(line => `<span class="line">${phrases(line).map(p => `<span class="ph">${esc(p)}</span>`).join("<wbr>")}</span>`).join("");
+
+/* 並べ替え用のよみ：カタカナはひらがなに、空白や記号は取る */
+export function sortKey(s) {
+  return String(s || "").normalize("NFKC")
+    .replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60))
+    .replace(/[\s・･,.、。「」『』（）()\-–—]/g, "").toLowerCase();
+}
+
+/* 作者の紹介を日本語版ウィキペディアから取る（見つからなければ null）。
+   文章は CC BY-SA 4.0。表示するときは出典のリンクを必ず付ける */
+export async function fetchAuthorBio(author) {
+  const name = String(author || "").split(/[\/／,、;；]/)[0]
+    .replace(/[（(].*?[）)]/g, "").replace(/(著|訳|編|作|絵|監修|原作)$/, "").trim()
+    .replace(/([^\x00-\x7f])\s+(?=[^\x00-\x7f])/g, "$1");
+  if (!name) return null;
+  try {
+    const r = await fetch(`https://ja.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(name)}?redirect=true`);
+    if (!r.ok) return null;
+    const j = await r.json();
+    if (j.type !== "standard" || !j.extract) return null;
+    return { text: j.extract, url: j.content_urls?.desktop?.page || `https://ja.wikipedia.org/wiki/${encodeURIComponent(name)}` };
+  } catch (e) { return null; }
+}
+
+/* カタカナをひらがなに（よみがなの表示用）。「ミナト カナエ」→「みなとかなえ」 */
+export const toHiragana = s => String(s || "").normalize("NFKC").replace(/[\u30a1-\u30f6]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60)).replace(/\s+/g, "");
+
+/* あいうえお順の比べ方：かな → 漢字（よみがない本）→ ABC → 数字 → その他 の順にまとめてから比べる */
+const jaCollator = new Intl.Collator("ja", { numeric: true });
+const group = k => /^[\u3041-\u309f]/.test(k) ? 0 : /^[\u4e00-\u9fff\u3400-\u4dbf々]/.test(k) ? 1 : /^[a-z]/i.test(k) ? 2 : /^\d/.test(k) ? 3 : 4;
+export function compareKana(a, b) {
+  if (!a && !b) return 0; if (!a) return 1; if (!b) return -1;
+  return group(a) - group(b) || jaCollator.compare(a, b);
+}

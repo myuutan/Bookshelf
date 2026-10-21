@@ -3,8 +3,8 @@
 // ・設定がなければ「お試し」：このブラウザの中だけに保存（見本の本入り）
 // 画面側（app.js）はどちらでも同じ書き方で使えるようにしています。
 
-import { SUPABASE_URL, SUPABASE_ANON_KEY, IMAGE_BUCKET } from "./config.js?v=20261021c";
-import { uid, blobToDataURL, shrink } from "./util.js?v=20261021c";
+import { SUPABASE_URL, SUPABASE_ANON_KEY, IMAGE_BUCKET } from "./config.js?v=20261021f";
+import { uid, blobToDataURL, shrink } from "./util.js?v=20261021f";
 
 const BUILTIN_BACKDROPS = Array.from({ length: 10 }, (_, i) => ({
   src: `assets/backdrops/bg${i + 1}.jpg`, thumb: `assets/backdrops/t${i + 1}.jpg`, builtin: true, position: i,
@@ -31,14 +31,18 @@ const DEMO_SAMPLES = [
 /* ---------- 共通の形（画面が使う形）に直す ---------- */
 const fromRow = {
   book: r => ({ id: r.id, title: r.title, author: r.author || "", publisher: r.publisher || "", isbn: r.isbn || "", cover: r.cover_url || "", spine: r.spine_url || "",
-    spineColor: r.spine_color || "", spineInk: r.spine_ink || "", shelf: r.shelf_id || null, backdrop: r.backdrop_id || null, tags: r.tag_ids || [], source: r.source || "", createdAt: r.created_at }),
+    spineColor: r.spine_color || "", spineInk: r.spine_ink || "", shelf: r.shelf_id || null, backdrop: r.backdrop_id || null, tags: r.tag_ids || [], source: r.source || "", createdAt: r.created_at,
+    description: r.description || "", published: r.published || "", authorBio: r.author_bio || "", authorBioUrl: r.author_bio_url || "",
+    review: r.review || "", memo: r.memo || "", titleKana: r.title_kana || "", authorKana: r.author_kana || "" }),
   tag: r => ({ id: r.id, name: r.name, color: r.color, position: r.position }),
   shelf: r => ({ id: r.id, name: r.name, position: r.position }),
   backdrop: r => ({ id: r.id, src: r.src, thumb: r.thumb, builtin: r.builtin, position: r.position }),
 };
 const toBookRow = b => {
   const m = { title: "title", author: "author", publisher: "publisher", isbn: "isbn", cover: "cover_url", spine: "spine_url", spineColor: "spine_color",
-    spineInk: "spine_ink", shelf: "shelf_id", backdrop: "backdrop_id", tags: "tag_ids", source: "source" };
+    spineInk: "spine_ink", shelf: "shelf_id", backdrop: "backdrop_id", tags: "tag_ids", source: "source",
+    description: "description", published: "published", authorBio: "author_bio", authorBioUrl: "author_bio_url",
+    review: "review", memo: "memo", titleKana: "title_kana", authorKana: "author_kana" };
   const out = {};
   for (const [k, v] of Object.entries(b)) if (m[k]) out[m[k]] = v === "" && (k === "shelf" || k === "backdrop") ? null : v;
   return out;
@@ -140,7 +144,7 @@ class CloudStore {
   async lookup(params) {
     const { data, error } = await this.sb.functions.invoke("book-lookup", { body: params });
     if (error) throw new Error("本の情報を取得できませんでした。少し時間をおいて試してください。");
-    return data.results || [];
+    return { results: data.results || [], hasMore: !!data.hasMore, mode: data.mode || null };
   }
   // 表紙の画像を取ってくる（ブラウザから直接だと色を読めないため、サーバー関数を通す）
   async fetchCover(url) {
@@ -202,17 +206,19 @@ class LocalStore {
 
   // お試しモードでは、ブラウザから直接 Google Books で探す（楽天は秘密の鍵が要るのでサーバー関数が必要）
   async lookup(params) {
-    const q = params.isbn ? `isbn:${params.isbn}` : params.q;
-    const r = await fetch(`https://www.googleapis.com/books/v1/volumes?maxResults=12&q=${encodeURIComponent(q)}`);
+    const q = params.isbn ? `isbn:${params.isbn}` : params.q, page = params.page || 1;
+    const r = await fetch(`https://www.googleapis.com/books/v1/volumes?maxResults=30&startIndex=${(page - 1) * 30}&q=${encodeURIComponent(q)}`);
     if (!r.ok) throw new Error("本の情報を取得できませんでした。少し時間をおいて試してください。");
     const j = await r.json();
-    return (j.items || []).map(it => {
+    const results = (j.items || []).map(it => {
       const v = it.volumeInfo || {};
       const isbn = (v.industryIdentifiers || []).find(x => x.type === "ISBN_13")?.identifier || "";
       const img = v.imageLinks?.thumbnail || v.imageLinks?.smallThumbnail || "";
       return { title: [v.title, v.subtitle].filter(Boolean).join(" "), author: (v.authors || []).join("、"), publisher: v.publisher || "", isbn,
-        cover: img.replace("http://", "https://").replace("&edge=curl", "").replace("zoom=1", "zoom=2"), source: "google" };
+        cover: img.replace("http://", "https://").replace("&edge=curl", "").replace("zoom=1", "zoom=2"), source: "google",
+        description: (v.description || "").replace(/<[^>]+>/g, ""), published: v.publishedDate || "" };
     });
+    return { results, hasMore: !params.isbn && (j.totalItems || 0) > page * 30 };
   }
   async fetchCover() { throw new Error("お試しモードでは表紙の色を読み取れません"); }
 }

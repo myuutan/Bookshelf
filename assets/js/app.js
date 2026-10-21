@@ -1,7 +1,7 @@
 // Petite Bibliothèque の画面
-import { store, isCloud } from "./store.js?v=20261021c";
-import { esc, titleHTML, hash, paletteFor, shrink, spineColorsFrom, normalizeIsbn } from "./util.js?v=20261021c";
-import { startScanner, stopScanner } from "./scanner.js?v=20261021c";
+import { store, isCloud } from "./store.js?v=20261021f";
+import { esc, titleHTML, proseHTML, sortKey, toHiragana, compareKana, fetchAuthorBio, hash, paletteFor, shrink, spineColorsFrom, normalizeIsbn } from "./util.js?v=20261021f";
+import { startScanner, stopScanner } from "./scanner.js?v=20261021f";
 
 const COLORS = ["c-rose", "c-gold", "c-ink", "c-sage", "c-sky"];
 const $ = s => document.querySelector(s);
@@ -11,7 +11,9 @@ const state = {
   view: "shelf", status: "all", shelf: "all", open: null,
   addTab: "scan", draft: null, msg: "", q: "", results: null, searching: false, saving: false, scanning: false, scanMsg: "",
   menu: false, menuOpen: {}, mq: "", bgSel: null, assignMsg: "",
-  manageSel: null, mfilter: "", confirm: null,
+  manageSel: null, mfilter: "", mtag: "all", msort: "added-desc", confirm: null,
+  sort: (() => { try { return localStorage.getItem("pb-sort") || "added-asc"; } catch (e) { return "added-asc"; } })(),
+  page: 1, hasMore: false, loadingMore: false,
   loginMsg: "", toast: "",
 };
 
@@ -21,7 +23,24 @@ const bookOf = id => D().books.find(b => b.id === id);
 const tagOf = id => D().tags.find(t => t.id === id);
 const shelfName = id => (D().shelves.find(s => s.id === id) || { name: "未分類" }).name;
 const bgOf = id => D().backdrops.find(b => b.id === id) || D().backdrops.find(b => b.id === D().siteBackdrop) || D().backdrops[0] || null;
-const filtered = () => D().books.filter(b => (state.status === "all" || b.tags.includes(state.status)) && (state.shelf === "all" || b.shelf === state.shelf));
+/* 並べ替え：作者・題名は「よみ」があればそれで、なければ表記のまま五十音に近い順で */
+const SORTS = [["added-asc", "Added · old → new"], ["added-desc", "Added · new → old"], ["author", "Author · あいうえお"], ["title", "Title · あいうえお"], ["publisher", "Publisher · 出版社ごと"]];
+const tKey = b => sortKey(b.titleKana || b.title), aKey = b => sortKey(b.authorKana || b.author);
+function sortBooks(list, mode) {
+  const at = b => b.createdAt || "";
+  const cmp = {
+    "added-asc": (x, y) => at(x).localeCompare(at(y)),
+    "added-desc": (x, y) => at(y).localeCompare(at(x)),
+    // 作者のあいうえお順 → 同じ作者の中は題名のあいうえお順
+    author: (x, y) => compareKana(aKey(x), aKey(y)) || compareKana(tKey(x), tKey(y)),
+    title: (x, y) => compareKana(tKey(x), tKey(y)),
+    // 出版社ごと → 同じ出版社の中は作者のあいうえお順 → 題名のあいうえお順
+    publisher: (x, y) => compareKana(sortKey(x.publisher), sortKey(y.publisher)) || compareKana(aKey(x), aKey(y)) || compareKana(tKey(x), tKey(y)),
+  }[mode] || (() => 0);
+  return list.map((b, i) => [b, i]).sort((p, q) => cmp(p[0], q[0]) || p[1] - q[1]).map(p => p[0]);
+}
+const sortSelect = (id, val) => `<label class="sortsel" for="${id}"><span class="sc">Order</span><select id="${id}">${SORTS.map(([k, v]) => `<option value="${k}" ${k === val ? "selected" : ""}>${v}</option>`).join("")}</select></label>`;
+const filtered = () => sortBooks(D().books.filter(b => (state.status === "all" || b.tags.includes(state.status)) && (state.shelf === "all" || b.shelf === state.shelf)), state.sort);
 const dims = b => { const h = hash(b.id || b.title); return { w: 28 + (h % 15), h: 196 + ((h >> 4) % 45), lean: (h >> 9) % 11 === 0 }; };
 const inks = b => b.spineColor ? [b.spineColor, b.spineInk || "#2f2a28"] : paletteFor(b.title);
 
@@ -94,6 +113,7 @@ function renderChrome() {
     D().tags.map(t => `<button class="chip" data-status="${t.id}" aria-pressed="${state.status === t.id}">${esc(t.name)}</button>`).join("");
   $("#shelf-chips").innerHTML = `<span class="sc">Shelf</span><button class="chip" data-shelf="all" aria-pressed="${state.shelf === "all"}">All</button>` +
     D().shelves.map(s => `<button class="chip" data-shelf="${s.id}" aria-pressed="${state.shelf === s.id}">${esc(s.name)}</button>`).join("");
+  $("#sort-box").innerHTML = sortSelect("sort-sel", state.sort);
 }
 function renderShelf() {
   const l = filtered();
@@ -124,7 +144,7 @@ function renderAdd() {
   if (state.addTab === "scan") {
     body = `<div class="reader-wrap"><div id="reader" class="reader"></div>
         ${state.scanning ? "" : `<div class="reader-idle"><button class="btn" data-scan="1">Start camera</button><p>本の裏のバーコード（978で始まる方）を枠に入れてください</p></div>`}</div>
-      ${state.scanMsg ? `<p class="notice">${esc(state.scanMsg)}</p>` : ""}
+      ${state.scanMsg ? `<p class="notice">${proseHTML(state.scanMsg)}</p>` : ""}
       <form class="isbn-form" data-form="isbn"><label for="isbn-in">カメラが使えないときは ISBN（13桁か10桁）
         <input type="text" id="isbn-in" inputmode="numeric" autocomplete="off" placeholder="978…"></label>
         <button class="btn ghost" type="submit">Find by ISBN</button></form>`;
@@ -133,15 +153,16 @@ function renderAdd() {
         <button class="btn" type="submit" ${state.searching ? "disabled" : ""}>${state.searching ? "Searching…" : "Search"}</button></form>
       <p class="hint">題名や作者の一部でも探せます。楽天ブックスで探し、見つからないときは Google Books でも探します。</p>
       <p class="hint">手元に本があるなら、<button class="linkish" data-addtab="scan">Barcode</button> から裏のバーコードを読み取るほうが確実です。</p>
-      <div class="results">${state.results ? (state.results.length ? resultRows(state.results) : `<p class="hint">見つかりませんでした。ことばを変えるか、「自分で入力」から追加してください。</p>`) : ""}</div>`;
+      <div class="results">${state.results ? (state.results.length ? resultRows(state.results) : `<p class="hint">${proseHTML("見つかりませんでした。ことばを変えるか、Manual entry から追加してください。")}</p>`) : ""}</div>
+      ${state.results?.length ? `<div class="more-row">${state.hasMore ? `<button class="btn ghost" data-more="1" ${state.loadingMore ? "disabled" : ""}>${state.loadingMore ? "Loading…" : "Show more results"}</button>` : `<p class="hint">${state.results.length}件 · これで全部です</p>`}</div>` : ""}`;
   } else {
     const d = state.draft || blankDraft();
     const pv = { ...d, title: d.title || "Title", author: d.author || "Author", cover: d.coverPreview || d.cover, spine: d.spinePreview || "", id: "preview" };
     const dup = d.title.trim() && D().books.find(b => (d.isbn && b.isbn === d.isbn) || b.title.trim() === d.title.trim());
-    body = `${state.msg ? `<p class="notice">${esc(state.msg)}</p>` : ""}
-      ${dup ? `<p class="notice warn">「${esc(dup.title)}」はすでに本棚にあります。同じ本を2冊目として入れる場合だけ「Place on the shelf」を押してください。</p>` : ""}
+    body = `${state.msg ? `<p class="notice">${proseHTML(state.msg)}</p>` : ""}
+      ${dup ? `<p class="notice warn">${proseHTML([`「${dup.title}」はすでに本棚にあります。`, "同じ本を2冊目として入れる場合だけ「Place on the shelf」を押してください。"])}</p>` : ""}
       <div class="preview">${coverHTML(pv)}${spineHTML({ ...pv, id: d.title || "preview" }, 'tabindex="-1" aria-hidden="true" disabled')}
-        <p class="hint">表紙は自動で入ります。背表紙は表紙の色から作られ、持っている本なら写真に差し替えられます。</p></div>
+        <p class="hint">${proseHTML(["表紙は自動で入ります。", "背表紙は表紙の色から作られ、持っている本なら写真に差し替えられます。"])}</p></div>
       <div class="grid2">
         <label for="f-title">題名<input type="text" id="f-title" value="${esc(d.title)}" required></label>
         <label for="f-author">作者<input type="text" id="f-author" value="${esc(d.author)}"></label>
@@ -171,11 +192,37 @@ function renderSheet() {
         <span class="sc small">${esc(shelfName(b.shelf))}</span>
         <h2>${titleHTML(b.title)}</h2><p class="by">${esc(b.author)}</p>
         <dl><dt>Publisher</dt><dd>${b.publisher ? esc(b.publisher) : '<span class="muted">未登録</span>'}</dd>
+          <dt>Published</dt><dd>${b.published ? esc(formatPublished(b.published)) : '<span class="muted">未登録</span>'}</dd>
           <dt>Shelf</dt><dd>${esc(shelfName(b.shelf))}</dd>${b.isbn ? `<dt>ISBN</dt><dd class="num">${esc(b.isbn)}</dd>` : ""}</dl>
         <div class="sec"><span class="sc small">Tag</span><div class="chips">${D().tags.map(t => `<button class="chip" data-toggle="${t.id}" aria-pressed="${b.tags.includes(t.id)}">${esc(t.name)}</button>`).join("")}</div></div>
-      </article></div></div>`;
+      </article></div>
+    <div class="more" id="more-${b.id}"><div class="more-in">
+      ${moreCard("Summary", "この本の概要", b.description, "概要はまだありません。")}
+      ${moreCard("About the author", "作者について", b.authorBio, "作者の紹介はまだありません。",
+        b.authorBioUrl ? `<p class="credit">出典：<a href="${esc(b.authorBioUrl)}" target="_blank" rel="noopener">Wikipedia</a>（CC BY-SA 4.0）</p>` : "")}
+      ${moreCard("My thoughts", "感想", b.review, "まだ書いていません。", "", b.id)}
+      ${moreCard("Notes", "メモ", b.memo, "メモはまだありません。", "", b.id)}
+    </div></div></div>`;
   requestAnimationFrame(fitTitle);
   document.fonts?.ready.then(fitTitle);
+  // 下の欄（概要・作者・感想・メモ）は、スクロールして見えてきたときにふわっと出す
+  const cards = root.querySelectorAll(".mcard");
+  if (!("IntersectionObserver" in window) || matchMedia("(prefers-reduced-motion: reduce)").matches) { cards.forEach(c => c.classList.add("in")); return; }
+  const io = new IntersectionObserver(es => es.forEach(en => { if (en.isIntersecting) { en.target.classList.add("in"); io.unobserve(en.target); } }),
+    { root: root.querySelector(".sheet"), threshold: 0.15 });
+  cards.forEach(c => io.observe(c));
+}
+function paras(text) { return String(text).split(/\n+/).map(t => t.trim()).filter(Boolean).map(t => `<p>${esc(t)}</p>`).join(""); }
+function moreCard(en, ja, text, empty, extra = "", editId = "") {
+  return `<section class="mcard"><h3>${en} <small>${ja}</small></h3>
+    ${text ? `<div class="mtext">${paras(text)}</div>${extra}` : `<p class="muted">${empty}</p>`}
+    ${editId ? `<button class="linkish" data-editbook="${editId}">${text ? "Edit" : "Write"} in Manage books</button>` : ""}</section>`;
+}
+/* 発行年月の表記をそろえる：2019-03-15 → 2019年3月15日、2026年01月 → 2026年1月 */
+function formatPublished(s) {
+  const m = String(s).match(/^(\d{4})(?:[-年/](\d{1,2}))?(?:[-月/](\d{1,2}))?/);
+  if (!m) return s;
+  return `${m[1]}年` + (m[2] ? `${+m[2]}月` : "") + (m[3] ? `${+m[3]}日` : "");
 }
 /* 題名：まず1行に収まるよう文字を小さくし、それでも入らなければ意味の切れ目で折り返す */
 function fitTitle() {
@@ -198,12 +245,16 @@ function manageRows(list, kind, countFn) {
 /* ---------- 本の管理（専用の画面） ---------- */
 function renderManage() {
   const q = state.mfilter.toLowerCase();
-  const list = D().books.filter(b => !q || (b.title + b.author + b.publisher).toLowerCase().includes(q));
+  if (state.mtag !== "all" && !tagOf(state.mtag)) state.mtag = "all";
+  const list = sortBooks(D().books.filter(b => (!q || (b.title + b.author + b.publisher).toLowerCase().includes(q)) && (state.mtag === "all" || b.tags.includes(state.mtag))), state.msort);
   const b = state.manageSel && bookOf(state.manageSel);
   return `<section class="manage ${b ? "has-sel" : ""}">
     <div class="mlist">
       <div class="mhead"><h2>Manage books</h2>
-        <input type="search" id="mfilter" value="${esc(state.mfilter)}" placeholder="題名・作者で絞り込む" aria-label="本を絞り込む"></div>
+        <input type="search" id="mfilter" value="${esc(state.mfilter)}" placeholder="題名・作者で絞り込む" aria-label="本を絞り込む">
+        <div class="chips"><button class="chip" data-mtagf="all" aria-pressed="${state.mtag === "all"}">All</button>${D().tags.map(t => `<button class="chip" data-mtagf="${t.id}" aria-pressed="${state.mtag === t.id}">${esc(t.name)}</button>`).join("")}</div>
+        ${sortSelect("msort-sel", state.msort)}
+        <p class="hint">${list.length}冊</p></div>
       <div class="mrows">${list.map(x => `<button class="mbook" data-msel="${x.id}" aria-current="${x.id === state.manageSel}">${coverHTML(x)}
         <span class="meta"><span class="t">${titleHTML(x.title)}</span><span class="a">${esc(x.author)}</span><span class="tags">${pills(x)}</span></span></button>`).join("")
         || `<p class="hint pad">見つかりませんでした。</p>`}</div>
@@ -212,34 +263,61 @@ function renderManage() {
   </section>`;
 }
 function manageEditor(b) {
+  const ta = (id, key, label, rows, ph = "") => `<label for="${id}" class="wide">${label}<textarea id="${id}" rows="${rows}" data-edit="${key}" placeholder="${ph}">${esc(b[key] || "")}</textarea></label>`;
   return `<button class="mback" data-mback="1">← All books</button>
     <div class="mtop">${coverHTML(b)}${spineHTML(b, 'tabindex="-1" aria-hidden="true" disabled')}
       <div class="mtitle"><span class="sc small">${esc(shelfName(b.shelf))}</span><h3>${titleHTML(b.title)}</h3><p class="by">${esc(b.author)}</p></div></div>
+    <p class="hint">${proseHTML(["よみがな・発行年月・概要・作者の紹介は自動で入ります。", "自分で書き直すこともできます。入力欄は、ほかの場所をタップすると保存されます。"])}</p>
+
+    <div class="esec"><h4>Book <small>本の情報</small></h4>
     <div class="grid2">
       <label for="e-title">題名<input type="text" id="e-title" value="${esc(b.title)}" data-edit="title"></label>
+      <label for="e-tkana">題名のよみ<input type="text" id="e-tkana" value="${esc(b.titleKana)}" data-edit="titleKana" placeholder="並べ替えに使います"></label>
       <label for="e-author">作者<input type="text" id="e-author" value="${esc(b.author)}" data-edit="author"></label>
+      <label for="e-akana">作者のよみ<input type="text" id="e-akana" value="${esc(b.authorKana)}" data-edit="authorKana" placeholder="例：みなとかなえ"></label>
       <label for="e-pub">出版社<input type="text" id="e-pub" value="${esc(b.publisher)}" data-edit="publisher"></label>
+      <label for="e-published">発行年月<input type="text" id="e-published" value="${esc(b.published)}" data-edit="published" placeholder="例：2026年1月"></label>
       <label for="e-isbn">ISBN<input type="text" id="e-isbn" inputmode="numeric" value="${esc(b.isbn)}" data-edit="isbn"></label>
       <label for="e-shelf">本棚<select id="e-shelf" data-edit="shelf">${D().shelves.map(s => `<option value="${s.id}" ${s.id === b.shelf ? "selected" : ""}>${esc(s.name)}</option>`).join("")}<option value="" ${!b.shelf ? "selected" : ""}>未分類</option></select></label>
     </div>
-    <p class="hint">入力欄は、ほかの場所をタップすると保存されます。</p>
+    <div><button class="icon-btn" data-refresh="1">足りない情報を自動で入れる</button></div>
+    ${ta("e-desc", "description", "この本の概要", 5)}
+    </div>
+
+    <div class="esec"><h4>Author <small>作者について</small></h4>
+    ${ta("e-bio", "authorBio", "作者の紹介", 4)}
+    <div class="filebtns"><button class="icon-btn" data-wiki="1">Wikipedia から入れる</button>
+      ${b.authorBioUrl ? `<span class="hint">出典：<a href="${esc(b.authorBioUrl)}" target="_blank" rel="noopener">Wikipedia</a>（CC BY-SA 4.0）</span>` : ""}</div>
+    </div>
+
+    <div class="esec"><h4>Notes <small>感想とメモ</small></h4>
+    ${ta("e-review", "review", "感想", 6, "読んで思ったこと、心に残った一文など")}
+    ${ta("e-memo", "memo", "メモ", 4, "買った場所、すすめてくれた人、読みたい理由など")}
+    </div>
+
+    <div class="esec"><h4>Shelf & look <small>タグ・背景・写真</small></h4>
     <div class="sec"><span class="sc small">Tag</span><div class="chips">${D().tags.map(t => `<button class="chip" data-mtag="${t.id}" aria-pressed="${b.tags.includes(t.id)}">${esc(t.name)}</button>`).join("")}</div></div>
     <div class="sec"><span class="sc small">Backdrop · この本の背景</span>${bgStrip(b.backdrop, "bookbg")}</div>
     <div class="sec"><span class="sc small">Photos</span><div class="filebtns">
       <label class="icon-btn file">Change cover<input type="file" accept="image/*" data-bookimg="cover"></label>
       <label class="icon-btn file">${b.spine ? "Change spine photo" : "Add spine photo"}<input type="file" accept="image/*" data-bookimg="spine"></label>
       ${b.spine ? `<button class="icon-btn" data-unspine="1">Remove spine photo</button>` : ""}</div></div>
+    </div>
+
     <div class="mfoot"><button class="btn ghost" data-open="${b.id}">Open this book</button>
       <button class="btn danger-btn" data-del="book:${b.id}">Delete this book</button></div>`;
 }
 
 /* ---------- 削除の確認（画面の真ん中に出す） ---------- */
 function confirmInfo(c) {
-  if (c.kind === "book") { const b = bookOf(c.id); return { title: "Delete this book?", body: `「${b.title}」を本棚から削除します。この操作は取り消せません。`, ok: "Delete", book: b }; }
-  if (c.kind === "tag") { const t = tagOf(c.id), n = D().books.filter(b => b.tags.includes(c.id)).length; return { title: "Delete this tag?", body: `タグ「${t.name}」を削除します。${n ? `${n}冊の本からこのタグが外れます。` : ""}本は消えません。`, ok: "Delete" }; }
-  if (c.kind === "shelf") { const s = D().shelves.find(x => x.id === c.id), n = D().books.filter(b => b.shelf === c.id).length; return { title: "Delete this shelf?", body: `本棚「${s.name}」を削除します。${n ? `入っている${n}冊は「未分類」になります。` : ""}本は消えません。`, ok: "Delete" }; }
-  if (c.kind === "bg") { const n = D().books.filter(b => b.backdrop === c.id).length; return { title: "Delete this backdrop?", body: `この背景の写真を削除します。${n ? `${n}冊の本の背景は、サイトの背景に戻ります。` : ""}`, ok: "Delete", bg: D().backdrops.find(x => x.id === c.id) }; }
-  return { title: "Reset demo data?", body: "お試しのデータを最初の状態に戻します。追加した本や写真は消えます。", ok: "Reset" };
+  if (c.kind === "book") { const b = bookOf(c.id); return { title: "Delete this book?", body: [`「${b.title}」を本棚から削除します。`, "この操作は取り消せません。"], ok: "Delete", book: b }; }
+  if (c.kind === "tag") { const t = tagOf(c.id), n = D().books.filter(b => b.tags.includes(c.id)).length;
+    return { title: "Delete this tag?", body: [`タグ「${t.name}」を削除します。`, n ? `${n}冊の本からこのタグが外れます（本は消えません）。` : "本は消えません。"], ok: "Delete" }; }
+  if (c.kind === "shelf") { const s = D().shelves.find(x => x.id === c.id), n = D().books.filter(b => b.shelf === c.id).length;
+    return { title: "Delete this shelf?", body: [`本棚「${s.name}」を削除します。`, n ? `入っている${n}冊は「未分類」になります（本は消えません）。` : "本は消えません。"], ok: "Delete" }; }
+  if (c.kind === "bg") { const n = D().books.filter(b => b.backdrop === c.id).length;
+    return { title: "Delete this backdrop?", body: ["この背景の写真を削除します。", n ? `この写真を背景にしている${n}冊は、サイトの背景に戻ります。` : ""], ok: "Delete", bg: D().backdrops.find(x => x.id === c.id) }; }
+  return { title: "Reset demo data?", body: ["お試しのデータを最初の状態に戻します。", "追加した本や写真は消えます。"], ok: "Reset" };
 }
 function renderConfirm() {
   const root = $("#confirm-root"), c = state.confirm;
@@ -247,7 +325,7 @@ function renderConfirm() {
   const i = confirmInfo(c);
   root.innerHTML = `<div class="confirm" data-confirm-cancel="1"><div class="confirm-card" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-body">
     ${i.book ? `<div class="confirm-book">${coverHTML(i.book)}</div>` : ""}${i.bg ? `<div class="confirm-bg" style="background-image:url('${i.bg.thumb}')"></div>` : ""}
-    <h2 id="confirm-title">${i.title}</h2><p id="confirm-body">${esc(i.body)}</p>
+    <h2 id="confirm-title">${i.title}</h2><p id="confirm-body" class="lines">${proseHTML(i.body)}</p>
     <div class="btns"><button class="btn ghost" data-confirm-cancel="1" id="confirm-cancel">Cancel</button><button class="btn danger-solid" data-confirm-ok="1">${i.ok}</button></div>
   </div></div>`;
   $("#confirm-cancel").focus();
@@ -322,7 +400,7 @@ function renderLogin() {
     <p class="hint">登録したメールアドレスにログイン用のリンクを送ります。届いたメールのリンクを開くと、本棚が表示されます。</p>
     <form class="isbn-form" data-form="login"><label for="login-email">メールアドレス<input type="email" id="login-email" autocomplete="email" required></label>
       <button class="btn" type="submit">Send link</button></form>
-    ${state.loginMsg ? `<p class="notice">${esc(state.loginMsg)}</p>` : ""}</section>`;
+    ${state.loginMsg ? `<p class="notice">${proseHTML(state.loginMsg)}</p>` : ""}</section>`;
 }
 function renderToast() { $("#toast").textContent = state.toast; $("#toast").hidden = !state.toast; }
 
@@ -344,16 +422,83 @@ function readDraft() {
     tags: D().tags.map(t => t.id).filter(k => document.getElementById("f-tag-" + k)?.checked) };
 }
 function toDraft(r, msg) {
-  state.draft = { ...blankDraft(), title: r.title || "", author: r.author || "", publisher: r.publisher || "", isbn: r.isbn || "", cover: r.cover || "", source: r.source || "manual" };
+  state.draft = { ...blankDraft(), title: r.title || "", author: r.author || "", publisher: r.publisher || "", isbn: r.isbn || "", cover: r.cover || "", source: r.source || "manual",
+    titleKana: toHiragana(r.titleKana), authorKana: toHiragana(r.authorKana), description: r.description || "", published: r.published || "" };
   state.addTab = "manual"; state.msg = msg; render(); window.scrollTo({ top: 0, behavior: "smooth" });
 }
 async function lookupIsbn(isbn) {
   state.scanMsg = `ISBN ${isbn} を探しています…`; state.scanning = false; render();
-  const res = await attempt(() => store.lookup({ isbn }));
+  const found = await attempt(() => store.lookup({ isbn }));
   state.scanMsg = "";
-  if (!res) { render(); return; }
+  if (!found) { render(); return; }
+  const res = found.results;
   if (res.length) toDraft(res[0], `見つかりました（${res[0].source === "rakuten" ? "楽天ブックス" : "Google Books"}）。まだ本棚には入っていません。内容を確かめて「Place on the shelf」を押してください。`);
   else { state.draft = { ...blankDraft(), isbn }; toDraft(state.draft, `ISBN ${isbn} の本は見つかりませんでした。題名などを入力してください。`); }
+}
+
+/* ---------- 足りない情報を自動で入れる ----------
+   よみがな・発行年月・概要・出版社は楽天（なければ Google Books）から、作者の紹介はウィキペディアから。
+   すでに入っている内容（自分で書いたもの）は上書きしない */
+const AUTO_KEYS = ["titleKana", "authorKana", "published", "description", "publisher"];
+const needsInfo = b => AUTO_KEYS.some(k => !b[k]) || (!b.authorBio && b.author);
+async function enrichPatch(b) {
+  const patch = {};
+  if (AUTO_KEYS.some(k => !b[k]) && (b.isbn || b.title)) {
+    try {
+      const found = await store.lookup(b.isbn ? { isbn: b.isbn } : { q: b.title, page: 1 });
+      const sameTitle = r => sortKey(r.title) === sortKey(b.title);
+      const sameAuthor = r => !b.author || sortKey(r.author).replace(/[^\p{L}]/gu, "").includes(sortKey(b.author).replace(/[^\p{L}]/gu, "").slice(0, 3));
+      const r = b.isbn ? found.results[0] : found.results.find(r => sameTitle(r) && sameAuthor(r));
+      if (r) {
+        for (const k of AUTO_KEYS) if (!b[k] && r[k]) patch[k] = k.endsWith("Kana") ? toHiragana(r[k]) : r[k];
+        if (!b.isbn && r.isbn) patch.isbn = r.isbn; // 題名と作者が一致したときだけ
+      }
+    } catch (e) { console.warn(e); }
+  }
+  if (!b.authorBio && b.author) {
+    const bio = await fetchAuthorBio(b.author);
+    if (bio) { patch.authorBio = bio.text; patch.authorBioUrl = bio.url; }
+  }
+  return patch;
+}
+/* 前に登録した本にも、ひらいたときに少しずつ自動で入れていく（同じ本は1週間に1回まで） */
+const TRIED_KEY = "pb-enrich-tried-v1";
+async function backfill() {
+  if (store.mode !== "cloud") return;
+  let tried = {};
+  try { tried = JSON.parse(localStorage.getItem(TRIED_KEY)) || {}; } catch (e) {}
+  const week = 7 * 24 * 3600 * 1000, now = Date.now();
+  for (const b of D().books.filter(b => needsInfo(b) && !(now - (tried[b.id] || 0) < week))) {
+    const patch = await enrichPatch(b);
+    tried[b.id] = Date.now();
+    try { localStorage.setItem(TRIED_KEY, JSON.stringify(tried)); } catch (e) {}
+    if (Object.keys(patch).length) {
+      const r = await store.updateBook(b.id, patch).catch(() => null);
+      if (r) { Object.assign(b, r); softRender(); }
+    }
+    await new Promise(r => setTimeout(r, 1500)); // 楽天は1秒に1回までなので間をあける
+  }
+}
+// 入力中や本を開いているときは画面を描き直さない（入力や読んでいる位置が消えないように）
+function softRender() {
+  const a = document.activeElement;
+  if (state.open || state.menu || state.confirm || (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))) return;
+  rerender();
+}
+
+/* 検索結果の続き（次のページ）を読み込んで、下に足す */
+async function loadMore() {
+  if (state.loadingMore || !state.hasMore) return;
+  state.loadingMore = true; render();
+  const found = await attempt(() => store.lookup({ q: state.q, page: state.page + 1, mode: state.searchMode || undefined }));
+  state.loadingMore = false;
+  if (found) {
+    const key = r => r.isbn || `${r.title}|${r.author}`;
+    const seen = new Set(state.results.map(key));
+    state.results = state.results.concat(found.results.filter(r => !seen.has(key(r))));
+    state.page += 1; state.hasMore = found.hasMore;
+  }
+  const y = window.scrollY; render(); window.scrollTo({ top: y });
 }
 
 /* ---------- 保存 ---------- */
@@ -373,10 +518,11 @@ async function saveDraft() {
   if (!d.title.trim()) { state.draft = d; state.msg = "題名を入れてください。"; render(); return; }
   state.saving = true; state.draft = d; render();
   const book = await attempt(async () => {
-    const c = await prepareCover(d);
+    const base = { title: d.title.trim(), author: d.author.trim(), publisher: d.publisher.trim(), isbn: d.isbn || "",
+      titleKana: d.titleKana || "", authorKana: d.authorKana || "", description: d.description || "", published: d.published || "", authorBio: "", authorBioUrl: "" };
+    const [c, extra] = await Promise.all([prepareCover(d), enrichPatch(base)]);
     const spine = d.spineBlob ? await store.uploadImage(await shrink(d.spineBlob, 900), "spines") : "";
-    return store.addBook({ title: d.title.trim(), author: d.author.trim(), publisher: d.publisher.trim(), isbn: d.isbn || "", ...c, spine,
-      shelf: d.shelf || null, backdrop: d.backdrop || null, tags: d.tags, source: d.source || "manual" });
+    return store.addBook({ ...base, ...extra, ...c, spine, shelf: d.shelf || null, backdrop: d.backdrop || null, tags: d.tags, source: d.source || "manual" });
   });
   state.saving = false;
   if (book) {
@@ -396,6 +542,7 @@ async function patchBook(id, patch, okMsg) {
 document.addEventListener("click", async e => {
   if (e.target.closest("summary")) { const det = e.target.closest("details"); setTimeout(() => { state.menuOpen[det.dataset.sec] = det.open; }, 0); return; }
   if (e.target.closest("#home-link")) { e.preventDefault(); goHome(); return; }
+  const cue = e.target.closest(".scroll-cue"); if (cue) { e.preventDefault(); document.querySelector(cue.getAttribute("href"))?.scrollIntoView({ behavior: "smooth", block: "start" }); return; }
   const t = e.target.closest("button,.scrim,.confirm"); if (!t || t.disabled) return;
   const d = t.dataset;
 
@@ -426,6 +573,17 @@ document.addEventListener("click", async e => {
   // 本の管理
   if (d.msel) { state.manageSel = d.msel; rerender(); if (matchMedia("(max-width:760px)").matches) window.scrollTo({ top: $(".manage").offsetTop - 12 }); return; }
   if (d.mback) { state.manageSel = null; render(); return; }
+  if (d.mtagf) { state.mtag = d.mtagf; rerender(); return; }
+  if (d.more) { loadMore(); return; }
+  if (d.editbook) { Object.assign(state, { view: "manage", manageSel: d.editbook, open: null, menu: false }); render(); setTimeout(() => { const r = $("#e-review"); r?.scrollIntoView({ block: "center" }); r?.focus({ preventScroll: true }); }, 50); return; }
+  if (d.wiki) { const b = bookOf(state.manageSel); toast("Wikipedia で探しています…");
+    const bio = await fetchAuthorBio(b.author);
+    if (!bio) { toast("Wikipedia に作者のページが見つかりませんでした"); return; }
+    patchBook(b.id, { authorBio: bio.text, authorBioUrl: bio.url }, "作者の紹介を入れました"); return; }
+  if (d.refresh) { const b = bookOf(state.manageSel); toast("情報を探しています…");
+    const patch = await enrichPatch(b);
+    if (!Object.keys(patch).length) { toast("足りない情報は見つかりませんでした"); return; }
+    patchBook(b.id, patch, "足りない情報を入れました"); return; }
   if (d.mtag) { const b = bookOf(state.manageSel), k = d.mtag; patchBook(b.id, { tags: b.tags.includes(k) ? b.tags.filter(x => x !== k) : [...b.tags, k] }); return; }
   if (d.bookbg) { patchBook(state.manageSel, { backdrop: d.bookbg }, "背景を変えました"); return; }
   if (d.unspine) { patchBook(state.manageSel, { spine: "" }, "背表紙の写真を外しました"); return; }
@@ -453,8 +611,9 @@ document.addEventListener("submit", async e => {
   }
   if (kind === "search") {
     state.q = $("#q-in").value.trim(); if (!state.q) return;
-    state.searching = true; render();
-    state.results = await attempt(() => store.lookup({ q: state.q })) || [];
+    state.searching = true; state.page = 1; render();
+    const found = await attempt(() => store.lookup({ q: state.q, page: 1 }));
+    state.results = found?.results || []; state.hasMore = !!found?.hasMore; state.searchMode = found?.mode || null;
     state.searching = false; render(); return;
   }
   if (kind === "new-tag" || kind === "new-shelf") {
@@ -484,6 +643,8 @@ document.addEventListener("input", e => {
 
 document.addEventListener("change", async e => {
   const t = e.target;
+  if (t.id === "sort-sel") { state.sort = t.value; try { localStorage.setItem("pb-sort", t.value); } catch (err) {} render(); return; }
+  if (t.id === "msort-sel") { state.msort = t.value; rerender(); return; }
   if (t.dataset.rename) {
     const [k, id] = t.dataset.rename.split(":"), v = t.value.trim(); if (!v) return;
     if (k === "tag") { tagOf(id).name = v; await attempt(() => store.updateTag(id, { name: v })); }
@@ -539,10 +700,11 @@ async function boot() {
     state.user = await store.init();
     store.onAuthChange(async u => {
       const was = !!state.user; state.user = u;
-      if (u && !was && !state.data) { state.data = await loadOnce(); state.ready = true; render(); }
+      if (u && !was && !state.data) { state.data = await loadOnce(); state.ready = true; render(); setTimeout(backfill, 2000); }
     });
     if (!isCloud || state.user) state.data = await loadOnce();
     state.ready = true; render();
+    if (state.data) setTimeout(backfill, 2000);
   } catch (e) {
     console.error(e);
     $("#main").innerHTML = `<section class="addbox"><h2>Oops</h2><p class="notice">本棚を読み込めませんでした：${esc(e.message)}</p><p class="hint">ページを読み込み直してください。続くときは config.js の設定を確認してください。</p></section>`;
