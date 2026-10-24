@@ -7,6 +7,7 @@
   --board:#fbf9f6; --board-edge:#e4ddd5;
   --f-display:"Cormorant Garamond","Didot","Bodoni 72","Times New Roman",serif;
   --f-body:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic",sans-serif;
+  --f-jp-serif:"Shippori Mincho","Hiragino Mincho ProN","Yu Mincho","YuMincho",serif;
 }
 *{box-sizing:border-box}
 html,body{min-height:100%}
@@ -127,7 +128,7 @@ input[type=file]{font-size:12px}
 .results{display:flex;flex-direction:column}
 .preview{display:flex;gap:18px;align-items:flex-end}
 .preview .cover{width:92px;flex:none;box-shadow:0 8px 18px rgba(43,37,35,.18)}
-.preview .spine{height:132px;flex:none}
+.preview .spine{flex:none}
 .sec{display:flex;flex-direction:column;gap:6px}
 
 /* detail */
@@ -278,7 +279,7 @@ body.login-mode .nav,body.login-mode .menu-btn,body.login-mode .lede{display:non
 .mback{display:none;align-self:flex-start;border:0;background:none;padding:0;font-family:var(--f-display);font-size:18px;color:var(--muted)}
 .mtop{display:flex;gap:16px;align-items:flex-end}
 .mtop .cover{width:96px;flex:none;box-shadow:0 10px 22px rgba(43,37,35,.18)}
-.mtop .spine{height:136px!important;flex:none}
+.mtop .spine{flex:none}
 .mtitle{min-width:0;display:flex;flex-direction:column;gap:4px;padding-bottom:4px}
 .mtitle h3{margin:0;font-weight:500;font-size:18px;line-height:1.5}
 .mtitle .by{margin:0;font-family:var(--f-display);font-style:italic;font-size:18px;color:var(--muted)}
@@ -342,3 +343,31 @@ label.wide{grid-column:1/-1}
 .credit a{color:inherit}
 .mcard{opacity:0;transform:translateY(18px);transition:opacity .6s ease,transform .6s cubic-bezier(.2,.8,.3,1)}
 .mcard.in{opacity:1;transform:none}
+
+/* ===== 背表紙：判型で高さをそろえ、自動の背表紙は紙の地＋表紙の色の帯 ===== */
+/* 自動の背表紙：opencover の背表紙に近い、淡い紙の地に黒い明朝体。上に題名（と副題）、中ほどに作者名、下に出版社名 */
+.spine.gen{background:var(--paper);color:var(--ink);padding:14px 0 10px;gap:0;justify-content:flex-start;align-items:center;border-radius:1px 1px 0 0;overflow:hidden;
+  box-shadow:inset 1.5px 0 0 rgba(255,255,255,.75),inset -1px 0 0 rgba(43,37,35,.07),inset 0 0 0 .5px rgba(43,37,35,.12)}
+.spine.gen .st,.spine.gen .sub,.spine.gen .sa,.spine.gen .sp{flex:none;max-height:none;min-height:0;writing-mode:vertical-rl;text-orientation:mixed;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-family:var(--f-jp-serif);color:var(--ink)}
+.spine.gen .up{text-orientation:upright}
+.spine.gen .latin{font-family:var(--f-display)}
+.spine.gen .st{font-weight:700;font-size:var(--fs);letter-spacing:.03em;line-height:1.12}
+.spine.gen .st.latin{font-weight:600;letter-spacing:.02em}
+.spine.gen .sub{font-weight:600;font-size:var(--ss);letter-spacing:.02em;line-height:1.2;margin-top:6px}
+.spine.gen .gap1{flex:1 1 0;min-height:7px}
+.spine.gen .gap2{flex:.55 1 0;min-height:5px}
+.spine.gen .sa{font-weight:700;font-size:var(--as);letter-spacing:.03em;line-height:1.15}
+.spine.gen .sp{font-weight:600;font-size:var(--ps);letter-spacing:.02em;line-height:1.1;color:var(--pink)}
+.spine.gen .in{display:inline}
+.spine.gen.oc-on > span{visibility:hidden}
+.spine.gen.oc-on{background:#fbf9f6}
+.spine.gen img.oc{object-fit:cover}
+.spine.photo{padding:0}
+.choice{display:flex;flex-direction:column;gap:8px}
+.opt{display:flex;flex-direction:column;gap:3px;text-align:left;padding:12px 14px;border:1px solid var(--line);background:#fff;color:var(--ink)}
+.opt b{font-family:var(--f-display);font-weight:500;font-size:17px}
+.opt span{font-size:12px;color:var(--muted);line-height:1.6}
+.opt[aria-pressed="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.spine.gen.tight .sp{display:none}
+.spine.gen .in{display:inline}
+.spine.gen .nb{white-space:nowrap}

@@ -1,7 +1,7 @@
 // Petite Bibliothèque の画面
-import { store, isCloud } from "./store.js?v=20261021f";
-import { esc, titleHTML, proseHTML, sortKey, toHiragana, compareKana, fetchAuthorBio, hash, paletteFor, shrink, spineColorsFrom, normalizeIsbn } from "./util.js?v=20261021f";
-import { startScanner, stopScanner } from "./scanner.js?v=20261021f";
+import { store, isCloud } from "./store.js?v=20261024i";
+import { esc, titleHTML, proseHTML, sortKey, toHiragana, compareKana, fetchAuthorBio, hash, paletteFor, shrink, spineColorsFrom, normalizeIsbn } from "./util.js?v=20261024i";
+import { startScanner, stopScanner } from "./scanner.js?v=20261024i";
 
 const COLORS = ["c-rose", "c-gold", "c-ink", "c-sage", "c-sky"];
 const $ = s => document.querySelector(s);
@@ -41,7 +41,23 @@ function sortBooks(list, mode) {
 }
 const sortSelect = (id, val) => `<label class="sortsel" for="${id}"><span class="sc">Order</span><select id="${id}">${SORTS.map(([k, v]) => `<option value="${k}" ${k === val ? "selected" : ""}>${v}</option>`).join("")}</select></label>`;
 const filtered = () => sortBooks(D().books.filter(b => (state.status === "all" || b.tags.includes(state.status)) && (state.shelf === "all" || b.shelf === state.shelf)), state.sort);
-const dims = b => { const h = hash(b.id || b.title); return { w: 28 + (h % 15), h: 196 + ((h >> 4) % 45), lean: (h >> 9) % 11 === 0 }; };
+/* 背表紙の大きさは、本の判型（文庫・新書・単行本など）で決める。
+   実物の高さの比（文庫148mm・新書173mm・単行本188mm…）に合わせ、同じ判型の本は高さがそろう */
+const FORMATS = { bunko: { h: 186, w: 22 }, comic: { h: 200, w: 20 }, shinsho: { h: 214, w: 18 }, tankobon: { h: 232, w: 30 }, large: { h: 252, w: 34 } };
+function formatOf(b) {
+  const s = String(b.size || "");
+  if (/文庫/.test(s)) return "bunko";
+  if (/新書/.test(s)) return "shinsho";
+  if (/コミック|漫画/.test(s)) return "comic";
+  if (/大型|ムック|図鑑|絵本|A4|B5|A5/.test(s)) return "large";
+  if (/単行本|四六|B6/.test(s)) return "tankobon";
+  const t = `${b.publisher || ""} ${b.title || ""}`; // 判型がまだ分からないときは名前から推測
+  if (/文庫/.test(t)) return "bunko";
+  if (/新書/.test(t)) return "shinsho";
+  return "tankobon";
+}
+const dims = (b, scale = 1) => { const f = FORMATS[formatOf(b)], r = hash(b.id || b.title);
+  return { w: Math.round((f.w + (r % 7) - 2) * scale), h: Math.round((f.h + ((r >> 4) % 5) - 2) * scale) }; };
 const inks = b => b.spineColor ? [b.spineColor, b.spineInk || "#2f2a28"] : paletteFor(b.title);
 
 function toast(msg) { state.toast = msg; renderToast(); clearTimeout(toast.t); toast.t = setTimeout(() => { state.toast = ""; renderToast(); }, 3200); }
@@ -67,35 +83,87 @@ const OC_KEY = "pb-opencover-v1";
 const OC = (() => { try { return new Map(Object.entries(JSON.parse(localStorage.getItem(OC_KEY)) || {})); } catch (e) { return new Map(); } })();
 const saveOC = () => { try { localStorage.setItem(OC_KEY, JSON.stringify(Object.fromEntries(OC))); } catch (e) {} };
 const ocUrl = isbn => `https://image.opencover.jp/v1/cover/spine/${isbn}.webp`;
-// 画像の縦横の比率を保ったまま、棚に収まる大きさにする（比率を変えないので背表紙が切れない）
-const ocSize = (h, ratio) => {
-  let w = h * ratio;
-  if (w < 14) { w = 14; h = w / ratio; }
-  if (w > 64) { w = 64; h = w / ratio; }
-  if (h > 250) { h = 250; w = h * ratio; }
-  return { w: Math.round(w), h: Math.round(h) };
-};
+// 高さは判型でそろえたまま、幅だけ画像の比率に合わせる（本の厚みが本物どおりになる）
+const ocWidth = (h, ratio) => Math.round(Math.max(10, Math.min(64, h * ratio)));
 window.__ocSpine = img => {
   const isbn = img.dataset.isbn, w = img.naturalWidth, h = img.naturalHeight;
   // 背表紙らしい縦長の画像でなければ、対応していないとみなす
   if (!w || !h || h < w * 2.5) { OC.set(isbn, 0); saveOC(); img.remove(); return; }
   OC.set(isbn, +(w / h).toFixed(4)); saveOC();
   const sp = img.closest(".spine"); if (!sp) return;
-  const base = parseFloat(sp.dataset.h || sp.style.height), size = ocSize(base, w / h);
-  sp.style.width = size.w + "px"; sp.style.height = size.h + "px"; sp.classList.add("oc-on");
+  sp.style.width = ocWidth(parseFloat(sp.style.height), w / h) + "px"; sp.classList.add("oc-on");
 };
 window.__ocFail = img => { OC.set(img.dataset.isbn, 0); saveOC(); img.remove(); };
-function spineHTML(b, attrs = "") {
-  let { w, h, lean } = dims(b); const [bg, ink] = inks(b);
-  const isbn = !b.spine && /^97[89]\d{10}$/.test(b.isbn || "") ? b.isbn : "";
+
+/* 自動で作る背表紙：紙の地に、表紙の色の帯。題名は省略せず、入る大きさの文字にする */
+const mixHex = (a, b, t) => { const p = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16)); const x = p(a), y = p(b);
+  return "#" + x.map((v, i) => Math.round(v * (1 - t) + y[i] * t).toString(16).padStart(2, "0")).join(""); };
+const textLen = s => [...String(s)].reduce((n, c) => n + (/[\x20-\x7e]/.test(c) ? 0.66 : 1), 0); // 英数字は半分くらいの長さ
+const shortPub = s => { const t = String(s || "").replace(/株式会社|\(株\)|（株）/g, "").trim();
+  // 英語の出版社名は「HarperCollins Publishers」→「HarperCollins」のように短くして、途中で切らない
+  return isLatin(t) ? t.replace(/\s+(Publishers?|Publishing|Press|Books|Inc\.?|Ltd\.?|LLC)\b.*$/i, "").slice(0, 16) : t.slice(0, 7); };
+// 題名を「本題」と「副題」に分ける（楽天の題名は「本題 副題」のように空白で区切られていることが多い）
+const isLatin = t => !/[぀-ヿ㐀-鿿]/.test(t);
+function splitTitle(t) {
+  t = String(t).trim();
+  if (isLatin(t)) return [t, ""]; // 英語の題名は空白で区切らない（Howl's Moving Castle を分けない）
+  const parts = t.split(/[\s　]+/);
+  if (parts.length > 1) {
+    // 先頭が「完訳」「新版」のように短いとき、2つ目が「4」「上」のような巻数のときは、本題に含める
+    let n = textLen(parts[0]) <= 2.5 ? 2 : 1;
+    while (n < parts.length && (textLen(parts[n]) <= 2 || /^[(（]?[0-9０-９上中下]+[)）巻]?$/.test(parts[n]))) n++;
+    return [parts.slice(0, n).join(" "), parts.slice(n).join(" ")];
+  }
+  const p = t.match(/^(.+?)\s*[（(〜~―-]\s*(.+?)[）)〜~―-]?$/);
+  return p && textLen(p[1]) >= 2 ? [p[1], p[2]] : [t, ""];
+}
+/* 出版社ごとの背表紙の雰囲気。ここに足すと、その出版社の本だけ地の色や文字の色が変わる。
+   例：{ match: /新潮社/, paper: "#f4efe6", ink: "#1f1a19", pubInk: "#7a2e2e" }
+   （何も当てはまらない本は、opencover の背表紙に近い、淡い紙の地に黒い明朝体） */
+const PUBLISHER_STYLES = [];
+const DEFAULT_STYLE = { paper: "#f6efec", ink: "#1d1918", pubInk: "#2b2523" };
+const styleFor = b => ({ ...DEFAULT_STYLE, ...(PUBLISHER_STYLES.find(s => s.match.test(b.publisher || "")) || {}) });
+// 数字は縦書きでも立てて並べる（「華氏451度」の 4・5・1 を横倒しにしない）
+const vText = s => [...String(s)].map(c => /[0-9０-９]/.test(c) ? `<span class="up">${c}</span>` : esc(c)).join("");
+function titleBrk(t, brk) {
+  const m = !isLatin(t) && t.match(/^(.*\S)\s+(\S{1,3})$/);
+  if (!m) return brk(t).replace(/\s<wbr>/g, " ");
+  return brk(m[1].slice(0, -1)).replace(/\s<wbr>/g, " ") + `<span class="nb">${brk(m[1].slice(-1))} ${brk(m[2])}</span>`;
+}
+/* 背表紙に書く作者は最初の1人だけ（「ヴィクトール・E・フランクル/池田香代子」→「ヴィクトール・E・フランクル」） */
+const firstAuthor = a => String(a || "").split(/[\/／,，;；]|\s{2,}/)[0]
+  .replace(/[（(][^）)]*[）)]$/, "").replace(/\s*(著|訳|編|編著|監修|作|文|絵|原作|著者)$/, "").trim();
+/* 文字の大きさは判型ごとに決まった値にそろえる（本ごとにばらばらにしない）。入りきらない本だけ小さくする */
+const SPINE_TYPE = { bunko: [10, 8], comic: [10, 8], shinsho: [10, 8], tankobon: [11, 8.5], large: [11.5, 9] };
+function genSpineParts(b, w, h) {
+  const st = styleFor(b);
+  // 「’」（全角のように扱われて縦書きで間が空く）を、ふつうのアポストロフィ「'」にそろえる
+  const norm = x => String(x || "").replace(/[’‘`´]/g, "'").replace(/[“”]/g, '"');
+  b = { ...b, title: norm(b.title), author: norm(b.author), publisher: norm(b.publisher) };
+  const [main] = splitTitle(b.title);
+  const [t, a] = SPINE_TYPE[formatOf(b)];
+  const fs = Math.min(t, w * 0.6), aSize = Math.min(a, w * 0.48), pSize = Math.min(7.5, w * 0.36);
+  const author = firstAuthor(b.author);
+  const one = s => vText(s); // 改行はしない（1行で書く）
+  return { style: `--paper:${st.paper};--ink:${st.ink};--pink:${st.pubInk};--fs:${fs.toFixed(1)}px;--as:${aSize.toFixed(1)}px;--ps:${pSize.toFixed(1)}px`,
+    html: `<span class="st ${isLatin(main) ? "latin" : ""}"><span class="in">${one(main)}</span></span>` +
+      `<span class="gap1"></span>` + (author ? `<span class="sa ${isLatin(author) ? "latin" : ""}"><span class="in">${one(author)}</span></span>` : "") +
+      `<span class="gap2"></span>` + (b.publisher ? `<span class="sp ${isLatin(b.publisher) ? "latin" : ""}"><span class="in">${one(shortPub(b.publisher))}</span></span>` : "") };
+}
+// 背表紙の欄にこの印が入っている本は、opencover の画像を使わずに自動の背表紙にする
+const GEN = "generated";
+function spineHTML(b, attrs = "", scale = 1) {
+  let { w, h } = dims(b, scale);
+  const isbn = !b.spine && D()?.spineStyle !== "uniform" && /^97[89]\d{10}$/.test(b.isbn || "") ? b.isbn : "";
+  const photo = b.spine && b.spine !== GEN ? b.spine : "";
   const known = isbn ? OC.get(isbn) : undefined;
-  const useOc = isbn && known !== 0;
-  const baseH = h;
-  if (useOc && known) ({ w, h } = ocSize(h, known));
+  const useOc = isbn && known !== 0; // opencover の背表紙があれば、それをいちばんに使う
+  if (useOc && known) w = ocWidth(h, known);
   const oc = useOc ? `<img class="oc" alt="" data-isbn="${isbn}" src="${ocUrl(isbn)}" loading="lazy" onload="__ocSpine(this)" onerror="__ocFail(this)">` : "";
-  const style = b.spine ? `width:${w}px;height:${h}px;background-image:url('${esc(b.spine)}')` : `width:${w}px;height:${h}px;background-color:${bg};color:${ink}`;
-  return `<button class="spine ${b.spine ? "photo" : ""} ${lean ? "lean" : ""} ${useOc && known ? "oc-on" : ""}" style="${style}" data-h="${baseH}" ${attrs} aria-label="${esc(b.title)}（${esc(b.author)}）">
-    <span class="rule"></span><span class="st">${esc(b.title)}</span><span class="sa">${esc(b.author)}</span><span class="rule"></span>${oc}</button>`;
+  const label = `aria-label="${esc(b.title)}（${esc(b.author)}）"`;
+  if (photo) return `<button class="spine photo" style="width:${w}px;height:${h}px;background-image:url('${esc(photo)}')" ${attrs} ${label}></button>`;
+  const g = genSpineParts(b, w, h);
+  return `<button class="spine gen ${useOc && known ? "oc-on" : ""}" style="width:${w}px;height:${h}px;${g.style}" ${attrs} ${label}>${g.html}${oc}</button>`;
 }
 const pills = b => b.tags.map(tagOf).filter(Boolean).map(t => `<span class="pill ${t.color}">${esc(t.name)}</span>`).join("");
 
@@ -161,7 +229,7 @@ function renderAdd() {
     const dup = d.title.trim() && D().books.find(b => (d.isbn && b.isbn === d.isbn) || b.title.trim() === d.title.trim());
     body = `${state.msg ? `<p class="notice">${proseHTML(state.msg)}</p>` : ""}
       ${dup ? `<p class="notice warn">${proseHTML([`「${dup.title}」はすでに本棚にあります。`, "同じ本を2冊目として入れる場合だけ「Place on the shelf」を押してください。"])}</p>` : ""}
-      <div class="preview">${coverHTML(pv)}${spineHTML({ ...pv, id: d.title || "preview" }, 'tabindex="-1" aria-hidden="true" disabled')}
+      <div class="preview">${coverHTML(pv)}${spineHTML({ ...pv, id: d.title || "preview" }, 'tabindex="-1" aria-hidden="true" disabled', 0.6)}
         <p class="hint">${proseHTML(["表紙は自動で入ります。", "背表紙は表紙の色から作られ、持っている本なら写真に差し替えられます。"])}</p></div>
       <div class="grid2">
         <label for="f-title">題名<input type="text" id="f-title" value="${esc(d.title)}" required></label>
@@ -265,7 +333,7 @@ function renderManage() {
 function manageEditor(b) {
   const ta = (id, key, label, rows, ph = "") => `<label for="${id}" class="wide">${label}<textarea id="${id}" rows="${rows}" data-edit="${key}" placeholder="${ph}">${esc(b[key] || "")}</textarea></label>`;
   return `<button class="mback" data-mback="1">← All books</button>
-    <div class="mtop">${coverHTML(b)}${spineHTML(b, 'tabindex="-1" aria-hidden="true" disabled')}
+    <div class="mtop">${coverHTML(b)}${spineHTML(b, 'tabindex="-1" aria-hidden="true" disabled', 0.6)}
       <div class="mtitle"><span class="sc small">${esc(shelfName(b.shelf))}</span><h3>${titleHTML(b.title)}</h3><p class="by">${esc(b.author)}</p></div></div>
     <p class="hint">${proseHTML(["よみがな・発行年月・概要・作者の紹介は自動で入ります。", "自分で書き直すこともできます。入力欄は、ほかの場所をタップすると保存されます。"])}</p>
 
@@ -300,8 +368,12 @@ function manageEditor(b) {
     <div class="sec"><span class="sc small">Backdrop · この本の背景</span>${bgStrip(b.backdrop, "bookbg")}</div>
     <div class="sec"><span class="sc small">Photos</span><div class="filebtns">
       <label class="icon-btn file">Change cover<input type="file" accept="image/*" data-bookimg="cover"></label>
-      <label class="icon-btn file">${b.spine ? "Change spine photo" : "Add spine photo"}<input type="file" accept="image/*" data-bookimg="spine"></label>
-      ${b.spine ? `<button class="icon-btn" data-unspine="1">Remove spine photo</button>` : ""}</div></div>
+      <label class="icon-btn file">${b.spine && b.spine !== GEN ? "Change spine photo" : "Add spine photo"}<input type="file" accept="image/*" data-bookimg="spine"></label>
+      ${b.spine && b.spine !== GEN ? `<button class="icon-btn" data-unspine="1">Remove spine photo</button>` : ""}
+      ${(!b.spine || b.spine === GEN) && /^97[89]\d{10}$/.test(b.isbn || "") && OC.get(b.isbn) ? (b.spine === GEN
+        ? `<button class="icon-btn" data-ocuse="1">opencover の背表紙を使う</button>`
+        : `<button class="icon-btn" data-ocuse="0">自動の背表紙にする</button>`) : ""}</div>
+      ${!b.spine && OC.get(b.isbn) && D().spineStyle !== "uniform" ? `<p class="hint">${proseHTML(["この本は opencover の背表紙の画像を使っています。", "画像の中の文字の並びは変えられないので、気になるときは「自動の背表紙にする」を押してください。"])}</p>` : ""}</div>
     </div>
 
     <div class="mfoot"><button class="btn ghost" data-open="${b.id}">Open this book</button>
@@ -370,6 +442,11 @@ function renderDrawer() {
       <input type="search" id="mq" value="${esc(state.mq)}" placeholder="題名・作者・出版社">
       <div class="sresults">${state.mq ? (hits.map(b => `<button class="sres" data-open="${b.id}">${coverHTML(b)}<span><span class="t">${titleHTML(b.title)}</span><br><span class="a">${esc(b.author)}</span></span></button>`).join("") || `<p class="hint">本棚に見つかりませんでした。</p>`) : `<p class="hint">本棚に入っている本から探します。</p>`}</div>
     </div></details>
+    <details class="dsec" data-sec="display" ${o("display")}><summary>Spines <small>背表紙の見せ方</small></summary><div class="dbody">
+      <div class="choice">${[["mixed", "Real spines when available", "opencover に本物そっくりの背表紙がある本はそれを使い、ない本は自動で作ります。"],
+        ["uniform", "Uniform design", "すべての本を同じデザインの背表紙にそろえます。自分で撮った背表紙の写真はそのまま使います。"]]
+        .map(([k, t, d]) => `<button class="opt" data-spinestyle="${k}" aria-pressed="${(D().spineStyle || "mixed") === k}"><b>${t}</b><span>${d}</span></button>`).join("")}</div>
+    </div></details>
     <details class="dsec" data-sec="tags" ${o("tags")}><summary>Tags <small>タグの管理</small></summary><div class="dbody">
       ${manageRows(D().tags, "tag", id => D().books.filter(b => b.tags.includes(id)).length)}
     </div></details>
@@ -404,6 +481,55 @@ function renderLogin() {
 }
 function renderToast() { $("#toast").textContent = state.toast; $("#toast").hidden = !state.toast; }
 
+/* 実際のフォントで描いたあと、まだはみ出している題名だけ文字を小さくする */
+/* 実際の文字で測って、背表紙に1行で収める。
+   3つ（題名・作者・出版社）が入りきらないときは、3つとも同じ割合で少し小さくする（バランスを崩さない）。
+   それでも入らない長い題名だけ、さらに小さく → 最後の手段として「…」
+   ※縦書きの長さは、同じ書体で横に並べたときの幅とほぼ同じなので、見えない横書きの箱で測る */
+let measurer = null;
+function textPx(el) {
+  if (!el) return 0;
+  if (!measurer) { measurer = document.createElement("span"); measurer.style.cssText = "position:absolute;left:-9999px;top:0;visibility:hidden;white-space:nowrap"; document.body.appendChild(measurer); }
+  const cs = getComputedStyle(el);
+  Object.assign(measurer.style, { fontFamily: cs.fontFamily, fontWeight: cs.fontWeight, fontSize: cs.fontSize, letterSpacing: cs.letterSpacing });
+  const t = el.textContent; measurer.textContent = t;
+  const digits = (t.match(/[0-9０-９]/g) || []).length; // 立てた数字は1文字ぶんの長さになる
+  return measurer.getBoundingClientRect().width + digits * parseFloat(cs.fontSize) * 0.45;
+}
+function fitSpines() {
+  const fsOf = el => parseFloat(getComputedStyle(el).fontSize);
+  const set = (el, f) => { if (el) el.style.fontSize = f.toFixed(2) + "px"; };
+  document.querySelectorAll(".spine.gen").forEach(sp => {
+    if (sp.offsetParent === null) return;
+    const st = sp.querySelector(".st"), sa = sp.querySelector(".sa"), pub = sp.querySelector(".sp");
+    [st, sa, pub].forEach(el => { if (el) { el.style.fontSize = ""; el.style.height = ""; } });
+    const avail = sp.clientHeight - 24 - 14;
+    const total = () => textPx(st) + textPx(sa) + (pub && !sp.classList.contains("tight") ? textPx(pub) : 0);
+    if (total() > avail) {
+      const k = avail / total();
+      [[st, 7.5], [sa, 6.5], [pub, 5.5]].forEach(([el, m]) => el && set(el, Math.max(m, fsOf(el) * k)));
+      let n = 0; // まだ入らなければ題名 → 作者の順に少しずつ小さく
+      while (total() > avail && n++ < 40) {
+        if (fsOf(st) > 7) set(st, fsOf(st) - 0.25);
+        else if (sa && fsOf(sa) > 6.5) set(sa, fsOf(sa) - 0.25);
+        else break;
+      }
+    }
+    // それでも入らない細い本は、出版社名をしまって題名と作者名を優先する
+    sp.classList.remove("tight");
+    if (pub && total() > avail) sp.classList.add("tight");
+    const pubOn = pub && !sp.classList.contains("tight");
+    // 高さをはっきり決めて置く（はみ出す分だけ「…」）
+    // 出版社・作者は書けるだけ書き、残りを題名に（それでも足りないときは作者名を最大で半分までにする）
+    const pH = pubOn ? Math.min(textPx(pub), avail * 0.2) : 0;
+    const lt = textPx(st), la = sa ? textPx(sa) : 0;
+    const aH = Math.min(la, Math.max(avail - pH - lt, (avail - pH) * 0.5));
+    const tH = Math.min(lt, avail - pH - aH);
+    if (pubOn) pub.style.height = Math.ceil(pH) + 1 + "px";
+    if (sa) sa.style.height = Math.ceil(aH) + 1 + "px";
+    st.style.height = Math.ceil(tH) + 1 + "px";
+  });
+}
 function render() {
   if (!state.ready) return;
   if (isCloud && !state.user) { renderLogin(); return; }
@@ -411,6 +537,7 @@ function render() {
   renderChrome();
   $("#main").innerHTML = state.view === "shelf" ? renderShelf() : state.view === "list" ? renderList() : state.view === "manage" ? renderManage() : renderAdd();
   renderSheet(); renderDrawer(); renderConfirm();
+  requestAnimationFrame(fitSpines); document.fonts?.ready.then(fitSpines);
 }
 function keepScroll(fn) { const d = $(".drawer"), m = $(".mrows"), y = d ? d.scrollTop : 0, my = m ? m.scrollTop : 0; fn(); const n = $(".drawer"), nm = $(".mrows"); if (n) n.scrollTop = y; if (nm) nm.scrollTop = my; }
 const rerender = () => keepScroll(render);
@@ -423,7 +550,7 @@ function readDraft() {
 }
 function toDraft(r, msg) {
   state.draft = { ...blankDraft(), title: r.title || "", author: r.author || "", publisher: r.publisher || "", isbn: r.isbn || "", cover: r.cover || "", source: r.source || "manual",
-    titleKana: toHiragana(r.titleKana), authorKana: toHiragana(r.authorKana), description: r.description || "", published: r.published || "" };
+    titleKana: toHiragana(r.titleKana), authorKana: toHiragana(r.authorKana), description: r.description || "", published: r.published || "", size: r.size || "" };
   state.addTab = "manual"; state.msg = msg; render(); window.scrollTo({ top: 0, behavior: "smooth" });
 }
 async function lookupIsbn(isbn) {
@@ -439,7 +566,7 @@ async function lookupIsbn(isbn) {
 /* ---------- 足りない情報を自動で入れる ----------
    よみがな・発行年月・概要・出版社は楽天（なければ Google Books）から、作者の紹介はウィキペディアから。
    すでに入っている内容（自分で書いたもの）は上書きしない */
-const AUTO_KEYS = ["titleKana", "authorKana", "published", "description", "publisher"];
+const AUTO_KEYS = ["titleKana", "authorKana", "published", "description", "publisher", "size"];
 const needsInfo = b => AUTO_KEYS.some(k => !b[k]) || (!b.authorBio && b.author);
 async function enrichPatch(b) {
   const patch = {};
@@ -462,7 +589,7 @@ async function enrichPatch(b) {
   return patch;
 }
 /* 前に登録した本にも、ひらいたときに少しずつ自動で入れていく（同じ本は1週間に1回まで） */
-const TRIED_KEY = "pb-enrich-tried-v1";
+const TRIED_KEY = "pb-enrich-tried-v2";
 async function backfill() {
   if (store.mode !== "cloud") return;
   let tried = {};
@@ -519,7 +646,7 @@ async function saveDraft() {
   state.saving = true; state.draft = d; render();
   const book = await attempt(async () => {
     const base = { title: d.title.trim(), author: d.author.trim(), publisher: d.publisher.trim(), isbn: d.isbn || "",
-      titleKana: d.titleKana || "", authorKana: d.authorKana || "", description: d.description || "", published: d.published || "", authorBio: "", authorBioUrl: "" };
+      titleKana: d.titleKana || "", authorKana: d.authorKana || "", description: d.description || "", published: d.published || "", size: d.size || "", authorBio: "", authorBioUrl: "" };
     const [c, extra] = await Promise.all([prepareCover(d), enrichPatch(base)]);
     const spine = d.spineBlob ? await store.uploadImage(await shrink(d.spineBlob, 900), "spines") : "";
     return store.addBook({ ...base, ...extra, ...c, spine, shelf: d.shelf || null, backdrop: d.backdrop || null, tags: d.tags, source: d.source || "manual" });
@@ -573,6 +700,7 @@ document.addEventListener("click", async e => {
   // 本の管理
   if (d.msel) { state.manageSel = d.msel; rerender(); if (matchMedia("(max-width:760px)").matches) window.scrollTo({ top: $(".manage").offsetTop - 12 }); return; }
   if (d.mback) { state.manageSel = null; render(); return; }
+  if (d.spinestyle) { D().spineStyle = d.spinestyle; rerender(); attempt(() => store.setSpineStyle(d.spinestyle), "背表紙の見せ方を変えました"); return; }
   if (d.mtagf) { state.mtag = d.mtagf; rerender(); return; }
   if (d.more) { loadMore(); return; }
   if (d.editbook) { Object.assign(state, { view: "manage", manageSel: d.editbook, open: null, menu: false }); render(); setTimeout(() => { const r = $("#e-review"); r?.scrollIntoView({ block: "center" }); r?.focus({ preventScroll: true }); }, 50); return; }
@@ -586,6 +714,7 @@ document.addEventListener("click", async e => {
     patchBook(b.id, patch, "足りない情報を入れました"); return; }
   if (d.mtag) { const b = bookOf(state.manageSel), k = d.mtag; patchBook(b.id, { tags: b.tags.includes(k) ? b.tags.filter(x => x !== k) : [...b.tags, k] }); return; }
   if (d.bookbg) { patchBook(state.manageSel, { backdrop: d.bookbg }, "背景を変えました"); return; }
+  if (d.ocuse) { patchBook(state.manageSel, { spine: d.ocuse === "1" ? "" : GEN }, d.ocuse === "1" ? "opencover の背表紙にしました" : "自動の背表紙にしました"); return; }
   if (d.unspine) { patchBook(state.manageSel, { spine: "" }, "背表紙の写真を外しました"); return; }
 
   // タグ・本棚

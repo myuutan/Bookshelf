@@ -3,8 +3,8 @@
 // ・設定がなければ「お試し」：このブラウザの中だけに保存（見本の本入り）
 // 画面側（app.js）はどちらでも同じ書き方で使えるようにしています。
 
-import { SUPABASE_URL, SUPABASE_ANON_KEY, IMAGE_BUCKET } from "./config.js?v=20261021f";
-import { uid, blobToDataURL, shrink } from "./util.js?v=20261021f";
+import { SUPABASE_URL, SUPABASE_ANON_KEY, IMAGE_BUCKET } from "./config.js?v=20261024i";
+import { uid, blobToDataURL, shrink } from "./util.js?v=20261024i";
 
 const BUILTIN_BACKDROPS = Array.from({ length: 10 }, (_, i) => ({
   src: `assets/backdrops/bg${i + 1}.jpg`, thumb: `assets/backdrops/t${i + 1}.jpg`, builtin: true, position: i,
@@ -33,7 +33,7 @@ const fromRow = {
   book: r => ({ id: r.id, title: r.title, author: r.author || "", publisher: r.publisher || "", isbn: r.isbn || "", cover: r.cover_url || "", spine: r.spine_url || "",
     spineColor: r.spine_color || "", spineInk: r.spine_ink || "", shelf: r.shelf_id || null, backdrop: r.backdrop_id || null, tags: r.tag_ids || [], source: r.source || "", createdAt: r.created_at,
     description: r.description || "", published: r.published || "", authorBio: r.author_bio || "", authorBioUrl: r.author_bio_url || "",
-    review: r.review || "", memo: r.memo || "", titleKana: r.title_kana || "", authorKana: r.author_kana || "" }),
+    review: r.review || "", memo: r.memo || "", titleKana: r.title_kana || "", authorKana: r.author_kana || "", size: r.size || "" }),
   tag: r => ({ id: r.id, name: r.name, color: r.color, position: r.position }),
   shelf: r => ({ id: r.id, name: r.name, position: r.position }),
   backdrop: r => ({ id: r.id, src: r.src, thumb: r.thumb, builtin: r.builtin, position: r.position }),
@@ -42,7 +42,7 @@ const toBookRow = b => {
   const m = { title: "title", author: "author", publisher: "publisher", isbn: "isbn", cover: "cover_url", spine: "spine_url", spineColor: "spine_color",
     spineInk: "spine_ink", shelf: "shelf_id", backdrop: "backdrop_id", tags: "tag_ids", source: "source",
     description: "description", published: "published", authorBio: "author_bio", authorBioUrl: "author_bio_url",
-    review: "review", memo: "memo", titleKana: "title_kana", authorKana: "author_kana" };
+    review: "review", memo: "memo", titleKana: "title_kana", authorKana: "author_kana", size: "size" };
   const out = {};
   for (const [k, v] of Object.entries(b)) if (m[k]) out[m[k]] = v === "" && (k === "shelf" || k === "backdrop") ? null : v;
   return out;
@@ -82,7 +82,7 @@ class CloudStore {
     if (allowSeed && !tags.length && !shelves.length && !backdrops.length) return this.seed();
     return {
       books: books.map(fromRow.book), tags: tags.map(fromRow.tag), shelves: shelves.map(fromRow.shelf),
-      backdrops: backdrops.map(fromRow.backdrop), siteBackdrop: settings?.site_backdrop_id || backdrops[0]?.id || null,
+      backdrops: backdrops.map(fromRow.backdrop), siteBackdrop: settings?.site_backdrop_id || backdrops[0]?.id || null, spineStyle: settings?.spine_style || "mixed",
     };
   }
   // はじめてログインしたときに、タグ・本棚・背景・最初の1冊を入れる
@@ -139,6 +139,7 @@ class CloudStore {
     if (!bd.builtin) { await this.removeImage(bd.src); await this.removeImage(bd.thumb); }
   }
   async setSiteBackdrop(id) { await this.q(this.sb.from("settings").upsert({ user_id: this.user.id, site_backdrop_id: id })); }
+  async setSpineStyle(v) { await this.q(this.sb.from("settings").upsert({ user_id: this.user.id, spine_style: v })); }
 
   // 本の情報を探す（サーバー関数 book-lookup が楽天→Google Books の順に探す）
   async lookup(params) {
@@ -202,6 +203,7 @@ class LocalStore {
     this.write();
   }
   async setSiteBackdrop(id) { this.db.siteBackdrop = id; this.write(); }
+  async setSpineStyle(v) { this.db.spineStyle = v; this.write(); }
   reset() { try { localStorage.removeItem(KEY); } catch (e) {} }
 
   // お試しモードでは、ブラウザから直接 Google Books で探す（楽天は秘密の鍵が要るのでサーバー関数が必要）

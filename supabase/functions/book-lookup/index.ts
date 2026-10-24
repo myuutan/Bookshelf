@@ -28,7 +28,7 @@ const json = (body: unknown, status = 200) =>
 
 type Book = {
   title: string; author: string; publisher: string; isbn: string; cover: string; source: "rakuten" | "google";
-  titleKana?: string; authorKana?: string; description?: string; published?: string;
+  titleKana?: string; authorKana?: string; description?: string; published?: string; size?: string;
 };
 type Page = { items: Book[]; hasMore: boolean };
 const PER_PAGE = 30;
@@ -69,6 +69,7 @@ async function rakutenCall(endpoint: "BooksBook" | "BooksTotal", extra: Record<s
       authorKana: it.authorKana ?? it.artistNameKana ?? "",
       description: stripTags(it.itemCaption ?? ""),
       published: it.salesDate ?? "",
+      size: it.size ?? "", // 判型（文庫・新書・単行本など）。背表紙の高さに使う
     })).filter((b: Book) => b.title);
     return { items, hasMore: (j.pageCount ?? 1) > page, count: j.count ?? items.length };
   }
