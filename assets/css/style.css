@@ -371,3 +371,6 @@ label.wide{grid-column:1/-1}
 .spine.gen.tight .sp{display:none}
 .spine.gen .in{display:inline}
 .spine.gen .nb{white-space:nowrap}
+.note .kindle .filebtns{margin-top:2px}
+a.btn,a.icon-btn{display:inline-flex;align-items:center;text-decoration:none}
+a.btn.kbtn{font-size:15px;padding:7px 18px}

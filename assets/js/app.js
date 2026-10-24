@@ -1,7 +1,7 @@
 // Petite Bibliothèque の画面
-import { store, isCloud } from "./store.js?v=20261024i";
-import { esc, titleHTML, proseHTML, sortKey, toHiragana, compareKana, fetchAuthorBio, hash, paletteFor, shrink, spineColorsFrom, normalizeIsbn } from "./util.js?v=20261024i";
-import { startScanner, stopScanner } from "./scanner.js?v=20261024i";
+import { store, isCloud } from "./store.js?v=20261024l";
+import { esc, titleHTML, proseHTML, sortKey, toHiragana, compareKana, fetchAuthorBio, hash, paletteFor, shrink, spineColorsFrom, normalizeIsbn } from "./util.js?v=20261024l";
+import { startScanner, stopScanner } from "./scanner.js?v=20261024l";
 
 const COLORS = ["c-rose", "c-gold", "c-ink", "c-sage", "c-sky"];
 const $ = s => document.querySelector(s);
@@ -263,6 +263,7 @@ function renderSheet() {
           <dt>Published</dt><dd>${b.published ? esc(formatPublished(b.published)) : '<span class="muted">未登録</span>'}</dd>
           <dt>Shelf</dt><dd>${esc(shelfName(b.shelf))}</dd>${b.isbn ? `<dt>ISBN</dt><dd class="num">${esc(b.isbn)}</dd>` : ""}</dl>
         <div class="sec"><span class="sc small">Tag</span><div class="chips">${D().tags.map(t => `<button class="chip" data-toggle="${t.id}" aria-pressed="${b.tags.includes(t.id)}">${esc(t.name)}</button>`).join("")}</div></div>
+        ${kindleLinks(b)}
       </article></div>
     <div class="more" id="more-${b.id}"><div class="more-in">
       ${moreCard("Summary", "この本の概要", b.description, "概要はまだありません。")}
@@ -279,6 +280,26 @@ function renderSheet() {
   const io = new IntersectionObserver(es => es.forEach(en => { if (en.isIntersecting) { en.target.classList.add("in"); io.unobserve(en.target); } }),
     { root: root.querySelector(".sheet"), threshold: 0.15 });
   cards.forEach(c => io.observe(c));
+}
+/* Kindle：タグの名前に「Kindle」が入っている本を Kindle で持っている本として扱う */
+const kindleTag = () => D().tags.find(t => /kindle/i.test(t.name));
+const isKindle = b => !!b.kindleUrl || (kindleTag() && b.tags.includes(kindleTag().id));
+// 保存したリンクがないときは、Kindle ストアで題名と作者を探すリンクにする
+const kindleSearch = b => `https://www.amazon.co.jp/s?i=digital-text&k=${encodeURIComponent(`${b.title} ${firstAuthor(b.author)}`.trim())}`;
+const safeUrl = u => /^https:\/\/[^\s"'<>]+$/i.test(u || "") ? u : "";
+// Amazon のリンクから ASIN（本ごとの10文字の番号）を取り出す。ASIN だけ貼っても使える
+const kindleAsin = u => (String(u || "").match(/(?:\/dp\/|\/gp\/product\/|\/ebook\/|asin=)([A-Z0-9]{10})(?![A-Z0-9])/i) || String(u || "").trim().match(/^([A-Z0-9]{10})$/i) || [])[1]?.toUpperCase() || "";
+const KINDLE_LIBRARY = "https://read.amazon.co.jp/kindle-library";
+// どの本にも「Find on Kindle Store」を出す。Kindle タグの本には「My Library」も出す
+function kindleLinks(b) {
+  const own = isKindle(b), url = safeUrl(b.kindleUrl), asin = kindleAsin(b.kindleUrl);
+  const a = (href, label, ghost) => `<a class="btn ${ghost ? "ghost " : ""}kbtn" href="${esc(href)}" target="_blank" rel="noopener">${label}</a>`;
+  let btns = "";
+  if (own && asin) btns += a(`https://read.amazon.co.jp/?asin=${asin}`, "Read on Kindle");
+  if (own) btns += a(KINDLE_LIBRARY, "My Library", !!asin);
+  if (url && !asin) btns += a(url, "Amazon page", true);
+  btns += a(kindleSearch(b), "Find on Kindle Store", true);
+  return `<div class="sec kindle"><span class="sc small">Kindle</span><div class="filebtns">${btns}</div></div>`;
 }
 function paras(text) { return String(text).split(/\n+/).map(t => t.trim()).filter(Boolean).map(t => `<p>${esc(t)}</p>`).join(""); }
 function moreCard(en, ja, text, empty, extra = "", editId = "") {
@@ -348,6 +369,10 @@ function manageEditor(b) {
       <label for="e-isbn">ISBN<input type="text" id="e-isbn" inputmode="numeric" value="${esc(b.isbn)}" data-edit="isbn"></label>
       <label for="e-shelf">本棚<select id="e-shelf" data-edit="shelf">${D().shelves.map(s => `<option value="${s.id}" ${s.id === b.shelf ? "selected" : ""}>${esc(s.name)}</option>`).join("")}<option value="" ${!b.shelf ? "selected" : ""}>未分類</option></select></label>
     </div>
+    <label for="e-kindle" class="wide">Kindle のリンク（Kindle で持っている本だけ）
+      <input type="url" id="e-kindle" value="${esc(b.kindleUrl)}" data-edit="kindleUrl" placeholder="https://www.amazon.co.jp/dp/… または ASIN"></label>
+    <div class="filebtns"><a class="icon-btn" href="${esc(kindleSearch(b))}" target="_blank" rel="noopener">Kindle ストアでこの本を探す</a>
+      <span class="hint">開いたページの URL をコピーして、上の欄に貼り付けます。</span></div>
     <div><button class="icon-btn" data-refresh="1">足りない情報を自動で入れる</button></div>
     ${ta("e-desc", "description", "この本の概要", 5)}
     </div>
@@ -783,6 +808,7 @@ document.addEventListener("change", async e => {
   if (t.dataset.edit) {
     const key = t.dataset.edit, v = t.value.trim();
     if (key === "title" && !v) { toast("題名は空にできません"); rerender(); return; }
+    if (key === "kindleUrl" && v && !safeUrl(v) && !kindleAsin(v)) { toast("https:// から始まるリンクを貼り付けてください"); rerender(); return; }
     patchBook(state.manageSel, { [key]: key === "shelf" ? (v || null) : v }, "保存しました"); return;
   }
   const file = t.files?.[0]; if (!file) return;

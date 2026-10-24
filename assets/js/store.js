@@ -3,15 +3,16 @@
 // ・設定がなければ「お試し」：このブラウザの中だけに保存（見本の本入り）
 // 画面側（app.js）はどちらでも同じ書き方で使えるようにしています。
 
-import { SUPABASE_URL, SUPABASE_ANON_KEY, IMAGE_BUCKET } from "./config.js?v=20261024i";
-import { uid, blobToDataURL, shrink } from "./util.js?v=20261024i";
+import { SUPABASE_URL, SUPABASE_ANON_KEY, IMAGE_BUCKET } from "./config.js?v=20261024l";
+import { uid, blobToDataURL, shrink } from "./util.js?v=20261024l";
 
 const BUILTIN_BACKDROPS = Array.from({ length: 10 }, (_, i) => ({
   src: `assets/backdrops/bg${i + 1}.jpg`, thumb: `assets/backdrops/t${i + 1}.jpg`, builtin: true, position: i,
 }));
 const DEFAULT_TAGS = [
   { name: "Want to Read", color: "c-rose" },
-  { name: "Owned", color: "c-gold" },
+  { name: "Owned · Paper", color: "c-gold" },
+  { name: "Kindle", color: "c-sky" },
   { name: "Read", color: "c-ink" },
 ];
 const DEFAULT_SHELVES = ["Novels", "Essays", "Life & Ideas"];
@@ -20,12 +21,12 @@ const FIRST_BOOK = { title: "犬は生まれながらにして哲学者である
 // お試しモードだけに入る見本の本（参考写真に写っていた本）
 const DEMO_SAMPLES = [
   ["外の世界の話を聞かせて", "江國香織", "集英社", ["Want to Read"], "Novels", 8],
-  ["すべての季節に君がいて", "神田澪", "", ["Want to Read", "Owned"], "Essays", 2],
-  ["彼女たちの20代", "山口路子", "ブルーモーメント", ["Read", "Owned"], "Life & Ideas", 4, "#7b2c3f", "#f6ecee"],
-  ["20代で得た知見", "F", "KADOKAWA", ["Read", "Owned"], "Essays", 7],
-  ["シンプルだから、贅沢", "ドミニック・ローホー", "講談社", ["Owned"], "Life & Ideas", 9, "#2e2b2b", "#f4efe9"],
+  ["すべての季節に君がいて", "神田澪", "", ["Want to Read", "Owned · Paper"], "Essays", 2],
+  ["彼女たちの20代", "山口路子", "ブルーモーメント", ["Read", "Owned · Paper"], "Life & Ideas", 4, "#7b2c3f", "#f6ecee"],
+  ["20代で得た知見", "F", "KADOKAWA", ["Read", "Owned · Paper"], "Essays", 7],
+  ["シンプルだから、贅沢", "ドミニック・ローホー", "講談社", ["Kindle"], "Life & Ideas", 9, "#2e2b2b", "#f4efe9"],
   ["往復書簡 初恋と不倫", "坂元裕二", "リトルモア", ["Read"], "Novels", 5, "#f1e9cf", "#3b3428"],
-  ["いつか別れる。でもそれは今日ではない", "F", "KADOKAWA", ["Read", "Owned"], "Essays", 6, "#cfd9e8", "#26324a"],
+  ["いつか別れる。でもそれは今日ではない", "F", "KADOKAWA", ["Read", "Owned · Paper"], "Essays", 6, "#cfd9e8", "#26324a"],
 ];
 
 /* ---------- 共通の形（画面が使う形）に直す ---------- */
@@ -33,7 +34,7 @@ const fromRow = {
   book: r => ({ id: r.id, title: r.title, author: r.author || "", publisher: r.publisher || "", isbn: r.isbn || "", cover: r.cover_url || "", spine: r.spine_url || "",
     spineColor: r.spine_color || "", spineInk: r.spine_ink || "", shelf: r.shelf_id || null, backdrop: r.backdrop_id || null, tags: r.tag_ids || [], source: r.source || "", createdAt: r.created_at,
     description: r.description || "", published: r.published || "", authorBio: r.author_bio || "", authorBioUrl: r.author_bio_url || "",
-    review: r.review || "", memo: r.memo || "", titleKana: r.title_kana || "", authorKana: r.author_kana || "", size: r.size || "" }),
+    review: r.review || "", memo: r.memo || "", titleKana: r.title_kana || "", authorKana: r.author_kana || "", size: r.size || "", kindleUrl: r.kindle_url || "" }),
   tag: r => ({ id: r.id, name: r.name, color: r.color, position: r.position }),
   shelf: r => ({ id: r.id, name: r.name, position: r.position }),
   backdrop: r => ({ id: r.id, src: r.src, thumb: r.thumb, builtin: r.builtin, position: r.position }),
@@ -42,7 +43,7 @@ const toBookRow = b => {
   const m = { title: "title", author: "author", publisher: "publisher", isbn: "isbn", cover: "cover_url", spine: "spine_url", spineColor: "spine_color",
     spineInk: "spine_ink", shelf: "shelf_id", backdrop: "backdrop_id", tags: "tag_ids", source: "source",
     description: "description", published: "published", authorBio: "author_bio", authorBioUrl: "author_bio_url",
-    review: "review", memo: "memo", titleKana: "title_kana", authorKana: "author_kana", size: "size" };
+    review: "review", memo: "memo", titleKana: "title_kana", authorKana: "author_kana", size: "size", kindleUrl: "kindle_url" };
   const out = {};
   for (const [k, v] of Object.entries(b)) if (m[k]) out[m[k]] = v === "" && (k === "shelf" || k === "backdrop") ? null : v;
   return out;
